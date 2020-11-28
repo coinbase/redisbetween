@@ -40,7 +40,7 @@ func itoa(i int64) string {
 }
 
 type ArgEncoder struct {
-	Args []interface{}
+	Args []string
 	Err  error
 }
 
@@ -50,16 +50,8 @@ func (e *ArgEncoder) Encode(r *Message) {
 	}
 }
 
-func (e *ArgEncoder) encodeMultiBulk(multi []*Message) error {
-	//if err := e.bw.WriteByte(byte(TypeArray)); err != nil {
-	//	return err
-	//}
-	return e.encodeArray(multi)
-}
-
 func (e *ArgEncoder) encodeTextBytes(b []byte) error {
-	// TODO instead of []byte, should we make this string() ?
-	e.Args = append(e.Args, b)
+	e.Args = append(e.Args, string(b))
 	return nil
 }
 
@@ -69,13 +61,11 @@ func (e *ArgEncoder) encodeTextString(s string) error {
 }
 
 func (e *ArgEncoder) encodeInt(v int64) error {
-	//e.Args = append(e.Args, v)
 	return e.encodeTextString(itoa(v))
 }
 
 func (e *ArgEncoder) encodeBulkBytes(b []byte) error {
-	e.Args = append(e.Args, b)
-	fmt.Println("bulkbytes", e.Args)
+	e.Args = append(e.Args, string(b))
 	return nil
 }
 
@@ -83,9 +73,6 @@ func (e *ArgEncoder) encodeArray(array []*Message) error {
 	if array == nil {
 		return e.encodeInt(-1)
 	} else {
-		//if err := e.encodeInt(int64(len(array))); err != nil {
-		//	return err
-		//}
 		for _, r := range array {
 			if err := e.encodeResp(r); err != nil {
 				return err
@@ -96,7 +83,6 @@ func (e *ArgEncoder) encodeArray(array []*Message) error {
 }
 
 func (e *ArgEncoder) encodeResp(r *Message) error {
-	fmt.Println("encodeResp", r.Value, r.Array, r.Type.String())
 	switch r.Type {
 	default:
 		return fmt.Errorf("bad resp type %s", r.Type)

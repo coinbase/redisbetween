@@ -2,11 +2,11 @@ package proxy
 
 import (
 	"fmt"
-	red "github.cbhq.net/engineering/redis-proxy/redis"
+	"github.cbhq.net/engineering/redis-proxy/redis"
 	"github.cbhq.net/engineering/redis-proxy/util"
-	"github.com/go-redis/redis/v8"
-	"net"
 	"runtime/debug"
+
+	"net"
 	"sync"
 	"syscall"
 	"time"
@@ -21,18 +21,19 @@ type Proxy struct {
 	log    *zap.Logger
 	statsd *statsd.Client
 
-	network     string
-	address     string
-	unlink      bool
-	ping        bool
-	opts        *redis.Options
-	clusterOpts *redis.ClusterOptions
+	network string
+	host    string
+	address string
+	unlink  bool
+	//poolOpt *radix.PoolOpt
+	poolSize int
+	//clusterOpt *radix.ClusterOpt
 
 	quit chan interface{}
 	kill chan interface{}
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, opts *redis.Options, clusterOpts *redis.ClusterOptions) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, host, address string, poolSize int) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -46,10 +47,12 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string
 		log:    log,
 		statsd: sd,
 
-		network:     network,
-		address:     address,
-		opts:        opts,
-		clusterOpts: clusterOpts,
+		network:  network,
+		host:     host,
+		address:  address,
+		poolSize: poolSize,
+		//poolOpt: poolOpt,
+		//clusterOpt: clusterOpt,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -93,7 +96,7 @@ func (p *Proxy) run() error {
 		}
 	}()
 
-	r, err := red.Connect(p.log, p.statsd, p.opts, p.clusterOpts)
+	r, err := redis.Connect(p.log, p.statsd, p.network, p.host, p.poolSize)
 	if err != nil {
 		return err
 	}
@@ -101,12 +104,12 @@ func (p *Proxy) run() error {
 	return p.listen(r)
 }
 
-func (p *Proxy) listen(r *red.Redis) error {
+func (p *Proxy) listen(r redis.Redis) error {
 	if p.network == "unix" {
 		oldUmask := syscall.Umask(0)
 		defer syscall.Umask(oldUmask)
 		if p.unlink {
-			_ = syscall.Unlink(p.address)
+			_ = syscall.Unlink(p.host)
 		}
 	}
 
@@ -129,7 +132,7 @@ func (p *Proxy) listen(r *red.Redis) error {
 	return nil
 }
 
-func (p *Proxy) accept(l net.Listener, r *red.Redis) {
+func (p *Proxy) accept(l net.Listener, r redis.Redis) {
 	var wg sync.WaitGroup
 	defer func() {
 		p.log.Info("Waiting for open connections")
