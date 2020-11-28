@@ -15,7 +15,7 @@ type Redis struct {
 	clusterOpts *redis.ClusterOptions
 
 	mu     sync.RWMutex
-	client redis.UniversalClient
+	Client redis.UniversalClient
 
 	roundTripCtx    context.Context
 	roundTripCancel func()
@@ -35,7 +35,7 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *redis.Options, clusterOpt
 		statsd:          sd,
 		opts:            opts,
 		clusterOpts:     clusterOpts,
-		client:          c,
+		Client:          c,
 		roundTripCtx:    rtCtx,
 		roundTripCancel: rtCancel,
 	}
@@ -45,14 +45,14 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *redis.Options, clusterOpt
 func (r *Redis) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.client == nil {
+	if r.Client == nil {
 		// already closed
 		return
 	}
 	r.roundTripCancel()
 	r.log.Info("Disconnect")
-	err := r.client.Close()
-	r.client = nil
+	err := r.Client.Close()
+	r.Client = nil
 	if err != nil {
 		r.log.Info("Error disconnecting", zap.Error(err))
 	}

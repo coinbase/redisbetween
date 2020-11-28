@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	red "github.cbhq.net/engineering/redis-proxy/redis"
 	"github.com/DataDog/datadog-go/statsd"
+	"github.com/go-redis/redis/v8"
 	"go.uber.org/zap"
 	"io"
 	"net"
@@ -54,6 +56,18 @@ func (c *connection) processMessages() {
 	}
 }
 
+// ---
+// Hello, this is Jordan at 11pm on thanksgiving. it looks like this redis client lib – while nice – is not as easy
+// to work with for the purpose of building a proxy as https://github.com/mediocregopher/radix may be. it looks like
+// radix supports a simpler interface for marshaling/unmarshaling redis messages, which means i can write my own types
+// to encode/decode raw messages and pass them on to the downstream client conn while potentially not even parsing the
+// underlying message into fully fledged types since i dont need them.
+
+// next mission: replace go-redis with radix and see if that makes life easier. do this on a separate branch.
+
+// another possibility is to only use the connection pooling / cluster protocol stuff from go-redis... ?
+// ---
+
 func (c *connection) handleMessage() (err error) {
 	//var reqOpCode, resOpCode wiremessage.OpCode
 
@@ -67,54 +81,47 @@ func (c *connection) handleMessage() (err error) {
 
 	var m *Message
 	if m, err = Decode(c.conn); err != nil {
-		return err
+		return
 	}
 
-	fmt.Println("message", m)
+	ctx := context.TODO()
+	e := ArgEncoder{}
+	e.Encode(m)
+	if e.Err != nil {
+		return
+	}
+	//c.log.Debug("Request", zap.Strings("args", args))
+	//fmt.Println("args", e.Args, "err", e.Err, "len(args)", len(e.Args))
 
-	// TODO implement roundTrip and forward the message
+	cmd := redis.NewCmd(ctx, e.Args...)
+	err = c.client.Client.Process(ctx, cmd)
+	if err != nil {
+		return
+	}
 
-	//
-	//var op mongo.Operation
-	//if op, err = mongo.Decode(wm); err != nil {
-	//	return
-	//}
-	//
-	//c.log.Debug("Request", zap.Int32("op_code", int32(op.OpCode())), zap.Int("request_size", len(wm)))
-	//
-	//isMaster = op.IsIsMaster()
-	//req := &mongo.Message{
-	//	Wm: wm,
-	//	Op: op,
-	//}
-	//reqOpCode = op.OpCode()
-	//
-	//var res *mongo.Message
-	//if res, err = c.roundTrip(req, isMaster); err != nil {
-	//	return
-	//}
-	//if req.Op.Unacknowledged() {
-	//	c.log.Debug("Unacknowledged request", zap.Int32("op_code", int32(resOpCode)))
-	//	return
-	//}
-	//
-	//resOpCode = res.Op.OpCode()
-	//
-	//if _, err = c.conn.Write(res.Wm); err != nil {
-	//	return
-	//}
+	c.log.Debug("Response", zap.String("result", cmd.String()))
+	res, err := cmd.Result()
+	if err != nil {
+		return err
+	}
+	fmt.Println("cmd.Result()", res)
+
+	// TODO have to write a CmdEncoder now
+	// it should take val (cmd.Result()) and encode it using the RESP spec
+
+	var out []byte
+	switch b := res.(type) {
+	case string:
+		out = []byte(b)
+	case int64:
+		out = []byte(itoa(b))
+	case []byte:
+		out = b
+	}
+	if _, err = c.conn.Write(out); err != nil {
+		return err
+	}
 	//
 	//c.log.Debug("Response", zap.Int32("op_code", int32(resOpCode)), zap.Int("response_size", len(res.Wm)))
 	return
 }
-
-//func (c *connection) roundTrip(msg *mongo.Message, isMaster bool) (*mongo.Message, error) {
-//	if isMaster {
-//		requestID := msg.Op.RequestID()
-//		c.log.Debug("Non-proxied ismaster response", zap.Int32("request_id", requestID))
-//		return mongo.IsMasterResponse(requestID, c.client.Description().Kind)
-//	}
-//
-//	c.log.Debug("Proxying request to upstream server", zap.Int("request_size", len(msg.Wm)))
-//	return c.client.RoundTrip(msg)
-//}
