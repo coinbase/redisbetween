@@ -12,12 +12,10 @@ var SupportedCommands = map[string]bool{
 	"COMMAND":              true,
 	"DECR":                 true,
 	"DECRBY":               true,
-	"DEL":                  true, // TODO special considerations for clusters?
 	"DUMP":                 true,
 	"ECHO":                 true,
 	"EVAL":                 true,
 	"EVALSHA":              true,
-	"EXISTS":               true, // TODO special considerations for clusters?
 	"EXPIRE":               true,
 	"EXPIREAT":             true,
 	"FLUSHALL":             true,
@@ -53,7 +51,6 @@ var SupportedCommands = map[string]bool{
 	"INCR":                 true,
 	"INCRBY":               true,
 	"INCRBYFLOAT":          true,
-	"KEYS":                 true, // TODO special considerations for clusters?
 	"LASTSAVE":             true,
 	"LINDEX":               true,
 	"LINSERT":              true,
@@ -66,7 +63,6 @@ var SupportedCommands = map[string]bool{
 	"LREM":                 true,
 	"LSET":                 true,
 	"LTRIM":                true,
-	"MGET":                 true, // TODO clusters?
 	"MOVE":                 true,
 	"MSET":                 true,
 	"MSETNX":               true,
@@ -94,7 +90,6 @@ var SupportedCommands = map[string]bool{
 	"SCAN":                 true,
 	"SCARD":                true,
 	"SDIFF":                true,
-	"SELECT":               true, // cluster only supports one db, so I don't think this can work?
 	"SET":                  true,
 	"SETBIT":               true,
 	"SETEX":                true,
@@ -113,10 +108,8 @@ var SupportedCommands = map[string]bool{
 	"SUBSTR":               true,
 	"SUNION":               true,
 	"SWAPDB":               true,
-	"TOUCH":                true, // clusters?
 	"TTL":                  true,
 	"TYPE":                 true,
-	"UNLINK":               true, // clusters?
 	"XACK":                 true,
 	"XADD":                 true,
 	"XCLAIM":               true,
@@ -151,64 +144,70 @@ var SupportedCommands = map[string]bool{
 	"ZSCAN":                true,
 	"ZSCORE":               true,
 
-	// TODO are these commands ok? redis-cluster-proxy doesn't allow cross-slot commands and i'm not sure why. maybe
-	// because it's not possible to respect a MOVED redirect with these commands?
-	"SDIFFSTORE":  true,
-	"SINTERSTORE": true,
-	"SUNIONSTORE": true,
-	"ZINTERSTORE": true,
-	"ZUNIONSTORE": true,
+	// cluster does not support multi-key invocations of the following commands
+	// TODO implement validation for these to reject invocations with more than one key.
+	"DEL":    true,
+	"EXISTS": true,
+	"KEYS":   true,
+	"MGET":   true,
+	"TOUCH":  true,
+	"UNLINK": true,
 }
 
 var UnsupportedCommands = map[string]bool{
-	"ACL":          false,
-	"ASKING":       false,
-	"CLIENT":       false,
-	"CLUSTER":      false, // this gets intercepted
-	"CONFIG":       false,
-	"DBSIZE":       false, // doesnt make sense for clusters?
-	"DEBUG":        false,
-	"HELLO":        false, // RESP3 protocol handshake
-	"INFO":         false,
-	"LATENCY":      false,
-	"MEMORY":       false,
-	"MIGRATE":      false,
-	"MODULE":       false,
-	"MONITOR":      false,
-	"PFDEBUG":      false,
-	"PFSELFTEST":   false,
-	"PSUBSCRIBE":   false,
-	"PSYNC":        false,
-	"PUBLISH":      false,
-	"PUBSUB":       false,
-	"PUNSUBSCRIBE": false,
-	"READONLY":     false,
-	"READWRITE":    false,
-	"REPLCONF":     false,
-	"REPLICAOF":    false,
-	"ROLE":         false,
-	"SCRIPT":       false,
-	"SHUTDOWN":     false,
-	"SLAVEOF":      false,
-	"SLOWLOG":      false,
-	"SUBSCRIBE":    false,
-	"SYNC":         false,
-	"TIME":         false,
-	"UNSUBSCRIBE":  false,
-	"WAIT":         false,
+	"ACL":          true,
+	"ASKING":       true,
+	"CLIENT":       true,
+	"CLUSTER":      true, // this gets intercepted
+	"CONFIG":       true,
+	"DBSIZE":       true, // doesnt make sense for clusters?
+	"DEBUG":        true,
+	"HELLO":        true, // RESP3 protocol handshake
+	"INFO":         true,
+	"LATENCY":      true,
+	"MEMORY":       true,
+	"MIGRATE":      true,
+	"MODULE":       true,
+	"MONITOR":      true,
+	"PFDEBUG":      true,
+	"PFSELFTEST":   true,
+	"PSUBSCRIBE":   true,
+	"PSYNC":        true,
+	"PUBLISH":      true,
+	"PUBSUB":       true,
+	"PUNSUBSCRIBE": true,
+	"READONLY":     true,
+	"READWRITE":    true,
+	"REPLCONF":     true,
+	"REPLICAOF":    true,
+	"ROLE":         true,
+	"SCRIPT":       true,
+	"SELECT":       true, // cluster only supports one db
+	"SHUTDOWN":     true,
+	"SLAVEOF":      true,
+	"SLOWLOG":      true,
+	"SUBSCRIBE":    true,
+	"SYNC":         true,
+	"TIME":         true,
+	"UNSUBSCRIBE":  true,
+	"WAIT":         true,
 
-	// redis transactions are stateful on the server side, and are associated with the connection. for a connection pooling
-	// proxy that shares a single connection among multiple clients, it doesn't make sense to support transactions, as
-	// each one monopolizes a connection from the pool as long as it is open, just like blocking commands.
+	// redis transactions are stateful on the server side, and are associated with
+	// the connection. for a connection pooling proxy that shares a single connection
+	// among multiple clients, it doesn't make sense to support transactions, as each
+	// one monopolizes a connection from the pool as long as it is open, just like
+	// blocking commands.
 	"DISCARD": true,
 	"EXEC":    true,
 	"MULTI":   true,
 	"UNWATCH": true,
 	"WATCH":   true,
 
-	// blocking commands cause clients to hold a connection open and wait for data to appear. these monopolize a connection
-	// from the pool, so don't make sense to allow for a connection pooling proxy. if these are required in the future, we
-	// could allow ad-hoc connections to be allocated in addition to the pool to support these?
+	// blocking commands cause clients to hold a connection open and wait for data to
+	// appear. these monopolize a connection from the pool, so don't make sense to
+	// allow for a connection pooling proxy. if these are required in the future, we
+	// could allow ad-hoc connections to be allocated in addition to the pool to
+	// support these?
 	"BLPOP":      true,
 	"BRPOP":      true,
 	"BRPOPLPUSH": true,
@@ -216,6 +215,15 @@ var UnsupportedCommands = map[string]bool{
 	"BZPOPMIN":   true,
 	"XREAD":      true, // streams
 	"XREADGROUP": true, // streams
+
+	// cluster doesn't support multi-key operations that may interact with more than
+	// one slot. we might later implement these commands in a way that works
+	// _sometimes_ but for now we will disallow them.
+	"SDIFFSTORE":  true,
+	"SINTERSTORE": true,
+	"SUNIONSTORE": true,
+	"ZINTERSTORE": true,
+	"ZUNIONSTORE": true,
 }
 
 func KnownCommand(c string) bool {
