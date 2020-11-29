@@ -1,7 +1,6 @@
 package redis
 
 import (
-	"context"
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/mediocregopher/radix/v3"
 	"go.uber.org/zap"
@@ -14,11 +13,9 @@ type Redis interface {
 }
 
 type baseClient struct {
-	log             *zap.Logger
-	statsd          *statsd.Client
-	mu              sync.RWMutex
-	roundTripCtx    context.Context
-	roundTripCancel func()
+	log    *zap.Logger
+	statsd *statsd.Client
+	mu     sync.RWMutex
 }
 
 type single struct {
@@ -33,12 +30,9 @@ type cluster struct {
 
 func Connect(log *zap.Logger, sd *statsd.Client, network string, host string, isCluster bool, poolSize int) (Redis, error) {
 	var c Redis
-	rtCtx, rtCancel := context.WithCancel(context.Background())
 	bc := baseClient{
-		log:             log,
-		statsd:          sd,
-		roundTripCtx:    rtCtx,
-		roundTripCancel: rtCancel,
+		log:    log,
+		statsd: sd,
 	}
 	if !isCluster {
 		p, err := radix.NewPool(network, host, poolSize, radix.PoolPipelineWindow(0, 0))
@@ -72,7 +66,6 @@ func (s *single) Close() {
 	if s.pool == nil { // already closed
 		return
 	}
-	s.roundTripCancel()
 	s.log.Info("Disconnect")
 	err := s.pool.Close()
 	s.pool = nil
@@ -91,7 +84,6 @@ func (c *cluster) Close() {
 	if c.cluster == nil { // already closed
 		return
 	}
-	c.roundTripCancel()
 	c.log.Info("Disconnect")
 	err := c.cluster.Close()
 	c.cluster = nil

@@ -71,24 +71,37 @@ func (c *connection) handleMessage() (err error) {
 		return
 	}
 
-	// TODO return err for unsupported commands
-	// TODO do array arguments work correctly?
 	// TODO test all commands
+	// TODO test this against a cluster (make a clustered redis in the docker compose)
 
-	e := ArgEncoder{}
-	e.Encode(m)
-	if e.Err != nil {
-		return
-	}
-	c.log.Debug("Request", zap.Strings("command", e.Args))
-
-	rcv := resp2.RawMessage{}
-	command = e.Args[0]
-	err = c.client.Do(radix.Cmd(&rcv, command, e.Args[1:]...))
+	args, err := EncodeToArgs(m)
 	if err != nil {
 		return
 	}
-	c.log.Debug("Response", zap.String("result", string(rcv)))
+	c.log.Debug("request", zap.Strings("command", args))
+
+	if len(args) == 0 {
+		return
+	}
+	if !KnownCommand(args[0]) {
+		c.log.Debug("unknown command", zap.Strings("command", args))
+	}
+
+	// normal operation for non-clustered redis is to return an error for the CLUSTER command, which this
+	// proxy will do according to this condition.
+	if !SupportedCommand(args[0]) {
+		// TODO write a redis error message to c.conn
+		c.log.Debug("unsupported command", zap.Strings("command", args))
+		return
+	}
+
+	rcv := resp2.RawMessage{}
+	command = args[0]
+	err = c.client.Do(radix.Cmd(&rcv, command, args[1:]...))
+	if err != nil {
+		return
+	}
+	c.log.Debug("response", zap.String("result", string(rcv)))
 
 	if _, err = c.conn.Write(rcv); err != nil {
 		return err

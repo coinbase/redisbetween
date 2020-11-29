@@ -37,37 +37,43 @@ func itoa(i int64) string {
 	return strconv.FormatInt(i, 10)
 }
 
-type ArgEncoder struct {
+func EncodeToArgs(m *Message) ([]string, error) {
+	e := argEncoder{}
+	e.encode(m)
+	return e.Args, e.Err
+}
+
+type argEncoder struct {
 	Args []string
 	Err  error
 }
 
-func (e *ArgEncoder) Encode(r *Message) {
+func (e *argEncoder) encode(r *Message) {
 	if err := e.encodeResp(r); err != nil {
 		e.Err = err
 	}
 }
 
-func (e *ArgEncoder) encodeTextBytes(b []byte) error {
+func (e *argEncoder) encodeTextBytes(b []byte) error {
 	e.Args = append(e.Args, string(b))
 	return nil
 }
 
-func (e *ArgEncoder) encodeTextString(s string) error {
+func (e *argEncoder) encodeTextString(s string) error {
 	e.Args = append(e.Args, s)
 	return nil
 }
 
-func (e *ArgEncoder) encodeInt(v int64) error {
+func (e *argEncoder) encodeInt(v int64) error {
 	return e.encodeTextString(itoa(v))
 }
 
-func (e *ArgEncoder) encodeBulkBytes(b []byte) error {
+func (e *argEncoder) encodeBulkBytes(b []byte) error {
 	e.Args = append(e.Args, string(b))
 	return nil
 }
 
-func (e *ArgEncoder) encodeArray(array []*Message) error {
+func (e *argEncoder) encodeArray(array []*Message) error {
 	if array == nil {
 		return e.encodeInt(-1)
 	} else {
@@ -80,7 +86,7 @@ func (e *ArgEncoder) encodeArray(array []*Message) error {
 	}
 }
 
-func (e *ArgEncoder) encodeResp(r *Message) error {
+func (e *argEncoder) encodeResp(r *Message) error {
 	switch r.Type {
 	default:
 		return fmt.Errorf("bad resp type %s", r.Type)
