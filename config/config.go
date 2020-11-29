@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	url2 "net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/DataDog/datadog-go/statsd"
@@ -35,8 +37,7 @@ type client struct {
 	//poolOpt    *radix.PoolOpt
 	//clusterOpt *radix.ClusterOpt
 	poolSize int
-	//opts        *redis.Options
-	//clusterOpts *redis.ClusterOptions
+	cluster  bool
 }
 
 func ParseFlags() *Config {
@@ -63,7 +64,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 		return nil, err
 	}
 	for _, client := range c.clients {
-		p, err := proxy.NewProxy(log, s, client.label, c.network, client.host, client.address, client.poolSize)
+		p, err := proxy.NewProxy(log, s, client.label, c.network, client.host, client.address, client.cluster, client.poolSize)
 		if err != nil {
 			return nil, err
 		}
@@ -112,12 +113,8 @@ func parseFlags() (*Config, error) {
 		return nil, fmt.Errorf("invalid network: %s", network)
 	}
 
-	// TODO discuss: this looks for a non-standard URL param called cluster=true to control what type of client to use
-	// not great and a bit ugly. better alternative?
-
-	nonClusterAddressMap := make(map[string]string)
-	clusterAddressMap := make(map[string]string)
-	r := regexp.MustCompile(`[?&]cluster=true`)
+	var clients []client
+	addrMap := make(map[string]bool)
 
 	for _, arg := range flag.Args() {
 		arg = expandEnv(arg)
@@ -129,56 +126,42 @@ func parseFlags() (*Config, error) {
 			if len(split) != 2 {
 				return nil, errors.New("malformed host:uri option")
 			}
-			if _, ok := clusterAddressMap[split[0]]; ok {
-				return nil, fmt.Errorf("uri already defined for host: %s", split[0])
+
+			// split[0] -> address
+			// split[1] -> uri
+			url, err := url2.Parse(split[1])
+			if err != nil {
+				return nil, err
 			}
-			if _, ok := nonClusterAddressMap[split[0]]; ok {
-				return nil, fmt.Errorf("uri already defined for host: %s", split[0])
+
+			params, err := url2.ParseQuery(url.RawQuery)
+			if err != nil {
+				return nil, err
 			}
-			subbed := r.ReplaceAllString(split[1], "")
-			if subbed == split[1] {
-				nonClusterAddressMap[split[0]] = split[1]
-			} else {
-				clusterAddressMap[split[0]] = subbed
+
+			cl := client{
+				address:  split[0],
+				host:     split[1],
+				label:    getStringParam(params, "label", ""),
+				poolSize: getIntParam(params, "poolsize", 5),
+				//poolOpt:    nil, // TODO
 			}
+
+			cl.cluster = hasParam(params, "cluster", "true")
+			clients = append(clients, cl)
 		}
 	}
 
-	if len(clusterAddressMap) == 0 && len(nonClusterAddressMap) == 0 {
-		return nil, errors.New("missing host:uri(s)")
+	if len(clients) == 0 {
+		return nil, errors.New("missing host=uri(s)")
 	}
 
-	fmt.Println("clusters", clusterAddressMap)
-	fmt.Println("non clusters", nonClusterAddressMap)
-
-	var clients []client
-	for address, uri := range nonClusterAddressMap {
-		label := address // TODO this seems wrong
-		clients = append(clients, client{
-			host:    uri,
-			address: address,
-			label:   label,
-			//poolOpt:    nil, // TODO
-			poolSize: 5,
-		})
-	}
-	for address, uri := range clusterAddressMap {
-		label := address // TODO this seems wrong
-		//opts := &redis.ClusterOptions{
-		//	Addrs: []string{uri},
-		//	//NewClient:          nil, // TODO this might be a better way to refactor - create a normal client to use for both
-		//	MaxRetries:      0,
-		//	MinRetryBackoff: 0,
-		//	MaxRetryBackoff: 0,
-		//	PoolSize:        5,
-		//	//ClusterSlots:       nil, // TODO custom function to re-resolve elasticache config endpoint
-		//}
-		clients = append(clients, client{
-			host:    uri,
-			address: address,
-			label:   label,
-			//clusterOpt: nil, // TODO
-		})
+	for _, c := range clients {
+		_, ok := addrMap[c.address]
+		if ok {
+			return nil, fmt.Errorf("duplicate entry for address: %v", c.address)
+		}
+		addrMap[c.address] = true
 	}
 
 	return &Config{
@@ -188,6 +171,31 @@ func parseFlags() (*Config, error) {
 		statsd:  stats,
 		level:   level,
 	}, nil
+}
+
+func hasParam(v url2.Values, key, val string) bool {
+	cl, ok := v[key]
+	return ok && cl[0] == val
+}
+
+func getStringParam(v url2.Values, key, def string) string {
+	cl, ok := v[key]
+	if !ok {
+		return def
+	}
+	return cl[0]
+}
+
+func getIntParam(v url2.Values, key string, def int) int {
+	cl, ok := v[key]
+	if !ok {
+		return def
+	}
+	i, err := strconv.Atoi(cl[0])
+	if err != nil {
+		return def
+	}
+	return i
 }
 
 func expandEnv(config string) string {

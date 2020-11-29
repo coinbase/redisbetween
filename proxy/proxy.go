@@ -21,19 +21,20 @@ type Proxy struct {
 	log    *zap.Logger
 	statsd *statsd.Client
 
-	network string
-	host    string
-	address string
-	unlink  bool
-	//poolOpt *radix.PoolOpt
+	network  string
+	host     string
+	address  string
+	unlink   bool
 	poolSize int
+	cluster  bool
+	//poolOpt *radix.PoolOpt
 	//clusterOpt *radix.ClusterOpt
 
 	quit chan interface{}
 	kill chan interface{}
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, host, address string, poolSize int) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, host, address string, cluster bool, poolSize int) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -51,6 +52,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, host, address 
 		host:     host,
 		address:  address,
 		poolSize: poolSize,
+		cluster:  cluster,
 		//poolOpt: poolOpt,
 		//clusterOpt: clusterOpt,
 
@@ -96,7 +98,7 @@ func (p *Proxy) run() error {
 		}
 	}()
 
-	r, err := redis.Connect(p.log, p.statsd, p.network, p.host, p.poolSize)
+	r, err := redis.Connect(p.log, p.statsd, p.network, p.host, p.cluster, p.poolSize)
 	if err != nil {
 		return err
 	}

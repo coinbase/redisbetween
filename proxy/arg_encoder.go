@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
-	//"github.com/CodisLabs/codis/pkg/utils/bufio2"
-	//"github.com/CodisLabs/codis/pkg/utils/errors"
 )
 
 const (

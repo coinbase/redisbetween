@@ -31,7 +31,7 @@ type cluster struct {
 	cluster *radix.Cluster
 }
 
-func Connect(log *zap.Logger, sd *statsd.Client, network string, host string, poolSize int) (Redis, error) {
+func Connect(log *zap.Logger, sd *statsd.Client, network string, host string, isCluster bool, poolSize int) (Redis, error) {
 	var c Redis
 	rtCtx, rtCancel := context.WithCancel(context.Background())
 	bc := baseClient{
@@ -40,7 +40,7 @@ func Connect(log *zap.Logger, sd *statsd.Client, network string, host string, po
 		roundTripCtx:    rtCtx,
 		roundTripCancel: rtCancel,
 	}
-	if poolSize != 0 {
+	if !isCluster {
 		p, err := radix.NewPool(network, host, poolSize, radix.PoolPipelineWindow(0, 0))
 		if err != nil {
 			return nil, err
