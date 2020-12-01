@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -71,36 +72,32 @@ func (c *connection) handleMessage() (err error) {
 		return
 	}
 
-	// TODO test all commands
-	// TODO test this against a cluster (make a clustered redis in the docker compose)
-
 	args, err := EncodeToArgs(m)
-	if err != nil {
-		return
-	}
 	c.log.Debug("request", zap.Strings("command", args))
-
-	if len(args) == 0 {
+	if len(args) == 0 || err != nil {
 		return
 	}
-	if !KnownCommand(args[0]) {
+	command = strings.ToUpper(args[0])
+
+	if !KnownCommand(command) {
 		c.log.Debug("unknown command", zap.Strings("command", args))
 	}
 
 	// normal operation for non-clustered redis is to return an error for the CLUSTER command, which this
 	// proxy will do according to this condition.
-	if !SupportedCommand(args[0]) {
-		// TODO write a redis error message to c.conn
+	if UnsupportedCommand(command) {
 		c.log.Debug("unsupported command", zap.Strings("command", args))
+		errorMessage := fmt.Sprintf("-redis-proxy: unsupported command %v\r\n", command)
+		_, err = c.conn.Write([]byte(errorMessage))
+		if err != nil {
+			return err
+		}
 		return
 	}
 
 	rcv := resp2.RawMessage{}
-	command = args[0]
-	err = c.client.Do(radix.Cmd(&rcv, command, args[1:]...))
-	if err != nil {
-		return
-	}
+	// when using RawMessage as the receiver, the error return value won't be populated
+	_ = c.client.Do(radix.Cmd(&rcv, command, args[1:]...))
 	c.log.Debug("response", zap.String("result", string(rcv)))
 
 	if _, err = c.conn.Write(rcv); err != nil {

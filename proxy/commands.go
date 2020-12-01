@@ -2,12 +2,10 @@ package proxy
 
 var SupportedCommands = map[string]bool{
 	"APPEND":               true,
-	"AUTH":                 true,
 	"BGREWRITEAOF":         true,
 	"BGSAVE":               true,
 	"BITCOUNT":             true,
 	"BITFIELD":             true,
-	"BITOP":                true,
 	"BITPOS":               true,
 	"COMMAND":              true,
 	"DECR":                 true,
@@ -18,7 +16,6 @@ var SupportedCommands = map[string]bool{
 	"EVALSHA":              true,
 	"EXPIRE":               true,
 	"EXPIREAT":             true,
-	"FLUSHALL":             true,
 	"FLUSHDB":              true,
 	"GEOADD":               true,
 	"GEODIST":              true,
@@ -157,11 +154,13 @@ var SupportedCommands = map[string]bool{
 var UnsupportedCommands = map[string]bool{
 	"ACL":          true,
 	"ASKING":       true,
+	"AUTH":         true, // not used by our apps currently
 	"CLIENT":       true,
 	"CLUSTER":      true, // this gets intercepted
 	"CONFIG":       true,
 	"DBSIZE":       true, // doesnt make sense for clusters?
 	"DEBUG":        true,
+	"FLUSHALL":     true, // todo: investigate why this gets sent to secondaries sometimes
 	"HELLO":        true, // RESP3 protocol handshake
 	"INFO":         true,
 	"LATENCY":      true,
@@ -219,6 +218,7 @@ var UnsupportedCommands = map[string]bool{
 	// cluster doesn't support multi-key operations that may interact with more than
 	// one slot. we might later implement these commands in a way that works
 	// _sometimes_ but for now we will disallow them.
+	"BITOP":       true,
 	"SDIFFSTORE":  true,
 	"SINTERSTORE": true,
 	"SUNIONSTORE": true,

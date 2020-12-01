@@ -44,7 +44,11 @@ func Connect(log *zap.Logger, sd *statsd.Client, network string, host string, is
 			pool:       p,
 		}
 	} else {
-		cl, err := radix.NewCluster([]string{host})
+		cl, err := radix.NewCluster([]string{host}, radix.ClusterPoolFunc(func(network, addr string) (radix.Client, error) {
+			// override the ClusterPoolFunc because by default radix enables secondary reads via READONLY, which we
+			// do not support yet.
+			return radix.NewPool(network, addr, poolSize, radix.PoolConnFunc(radix.DefaultConnFunc))
+		}))
 		if err != nil {
 			return nil, err
 		}
