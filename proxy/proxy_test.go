@@ -39,23 +39,37 @@ type doer interface {
 }
 
 var integrationScript = []command{
-	command{"set", []string{"hi", "hello"}, "+OK\r\n"},
-	command{"get", []string{"hi"}, "$5\r\nhello\r\n"},
-	command{"append", []string{"hi", " world"}, ":11\r\n"},
-	command{"get", []string{"hi"}, "$11\r\nhello world\r\n"},
-	command{"auth", []string{"secret"}, "-redis-proxy: unsupported command AUTH\r\n"},
-	command{"bgrewriteaof", []string{}, "+Background append only file rewriting started\r\n"},
-	command{"bitcount", []string{"hi"}, ":45\r\n"},
-	command{"set", []string{"bf", "0"}, "+OK\r\n"},
-	command{"bitfield", []string{"bf", "incrby", "u2", "100", "1"}, "*1\r\n:1\r\n"},
-	command{"bitcount", []string{"hi"}, ":45\r\n"},
-	command{"bitop", []string{"AND", "bo", "hi", "bf"}, "-redis-proxy: unsupported command BITOP\r\n"},
-	command{"bitpos", []string{"hi", "1"}, ":1\r\n"},
-	command{"set", []string{"incrdecr", "3"}, "+OK\r\n"},
-	command{"decr", []string{"incrdecr"}, ":2\r\n"},
-	command{"decrby", []string{"incrdecr", "2"}, ":0\r\n"},
-	command{"dump", []string{"hi"}, "$23\r\n\x00\vhello world\t\x00\xdb\x0e\x18u\xf2AÅ\r\n"},
-	command{"echo", []string{"coinbase"}, "$8\r\ncoinbase\r\n"},
+	{"flushall", []string{}, "+OK\r\n"},
+	{"set", []string{"hi", "hello"}, "+OK\r\n"},
+	{"get", []string{"hi"}, "$5\r\nhello\r\n"},
+	{"append", []string{"hi", " world"}, ":11\r\n"},
+	{"get", []string{"hi"}, "$11\r\nhello world\r\n"},
+	{"auth", []string{"secret"}, "-redis-proxy: unsupported command AUTH\r\n"},
+	{"bgrewriteaof", []string{}, "+Background append only file rewriting started\r\n"},
+	{"bitcount", []string{"hi"}, ":45\r\n"},
+	{"set", []string{"bf", "0"}, "+OK\r\n"},
+	{"bitfield", []string{"bf", "incrby", "u2", "100", "1"}, "*1\r\n:1\r\n"},
+	{"bitcount", []string{"hi"}, ":45\r\n"},
+	{"bitop", []string{"AND", "bo", "hi", "bf"}, "-redis-proxy: unsupported command BITOP\r\n"},
+	{"bitpos", []string{"hi", "1"}, ":1\r\n"},
+	{"set", []string{"incrdecr", "3"}, "+OK\r\n"},
+	{"decr", []string{"incrdecr"}, ":2\r\n"},
+	{"decrby", []string{"incrdecr", "2"}, ":0\r\n"},
+	{"dump", []string{"hi"}, "$23\r\n\x00\vhello world\t\x00\xdb\x0e\x18u\xf2AÅ\r\n"},
+	{"echo", []string{"coinbase"}, "$8\r\ncoinbase\r\n"},
+	{"expire", []string{"incrdecr", "1"}, ":1\r\n"},
+	{"expireat", []string{"incrdecr", "1293840000"}, ":1\r\n"},
+	{"flushdb", []string{}, "+OK\r\n"},
+	{"geoadd", []string{"Sicily", "13.361389", "38.115556", "Palermo", "15.087269", "37.502669", "Catania"}, ":2\r\n"},
+	{"geodist", []string{"Sicily", "Palermo", "Catania"}, "$11\r\n166274.1516\r\n"},
+	{"georadius", []string{"Sicily", "15", "37", "200", "km"}, "*2\r\n$7\r\nPalermo\r\n$7\r\nCatania\r\n"},
+	{"set", []string{"hi", "0"}, "+OK\r\n"},
+	{"getset", []string{"hi", "1"}, "$1\r\n0\r\n"},
+	{"hmset", []string{"myhash", "field1", "hello", "field2", "world"}, "+OK\r\n"},
+	{"hget", []string{"myhash", "field1"}, "$5\r\nhello\r\n"},
+	{"hmget", []string{"myhash", "field1", "field2"}, "*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n"},
+	{"move", []string{"myhash", "2"}, "-redis-proxy: unsupported command MOVE\r\n"},
+	{"mset", []string{"hi{1}", "hello", "incrdecr{1}", "world"}, "+OK\r\n"},
 }
 
 func TestIntegrationCommands(t *testing.T) {
@@ -74,6 +88,11 @@ func TestIntegrationCommands(t *testing.T) {
 	assertResponse(t, eval, singleClient)
 	eval.res = "-CROSSSLOT Keys in request don't hash to the same slot\r\n"
 	assertResponse(t, eval, clusterClient)
+
+	mset := command{"mset", []string{"a", "1", "b", "1", "c", "1", "d", "1", "zzzbbq", "1"}, "+OK\r\n"}
+	assertResponse(t, mset, singleClient)
+	eval.res = "-CROSSSLOT Keys in request don't hash to the same slot\r\n"
+	assertResponse(t, mset, clusterClient)
 
 	sds()
 	sdc()

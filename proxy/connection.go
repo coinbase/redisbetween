@@ -4,13 +4,10 @@ import (
 	"fmt"
 	"github.cbhq.net/engineering/redis-proxy/redis"
 	"github.com/DataDog/datadog-go/statsd"
-	"github.com/mediocregopher/radix/v3"
-	"github.com/mediocregopher/radix/v3/resp/resp2"
 	"go.uber.org/zap"
 	"io"
 	"net"
 	"runtime/debug"
-	"strings"
 	"time"
 )
 
@@ -58,36 +55,20 @@ func (c *connection) processMessages() {
 }
 
 func (c *connection) handleMessage() (err error) {
-	var command string
-
 	defer func(start time.Time) {
 		_ = c.statsd.Timing("handle_message", time.Since(start), []string{
 			fmt.Sprintf("success:%v", err == nil),
-			fmt.Sprintf("command:%v", command),
 		}, 1)
 	}(time.Now())
 
-	var m *Message
-	if m, err = Decode(c.conn); err != nil {
+	var m *redis.Message
+	if m, err = redis.Decode(c.conn); err != nil {
 		return
 	}
 
-	args, err := EncodeToArgs(m)
-	c.log.Debug("request", zap.Strings("command", args))
-	if len(args) == 0 || err != nil {
-		return
-	}
-	command = strings.ToUpper(args[0])
-
-	if !KnownCommand(command) {
-		c.log.Debug("unknown command", zap.Strings("command", args))
-	}
-
-	// normal operation for non-clustered redis is to return an error for the CLUSTER command, which this
-	// proxy will do according to this condition.
-	if UnsupportedCommand(command) {
-		c.log.Debug("unsupported command", zap.Strings("command", args))
-		errorMessage := fmt.Sprintf("-redis-proxy: unsupported command %v\r\n", command)
+	rcv, err := c.client.Do(m)
+	if err != nil {
+		errorMessage := fmt.Sprintf("-redis-proxy: %v\r\n", err.Error())
 		_, err = c.conn.Write([]byte(errorMessage))
 		if err != nil {
 			return err
@@ -95,11 +76,7 @@ func (c *connection) handleMessage() (err error) {
 		return
 	}
 
-	rcv := resp2.RawMessage{}
-	// when using RawMessage as the receiver, the error return value won't be populated
-	_ = c.client.Do(radix.Cmd(&rcv, command, args[1:]...))
 	c.log.Debug("response", zap.String("result", string(rcv)))
-
 	if _, err = c.conn.Write(rcv); err != nil {
 		return err
 	}

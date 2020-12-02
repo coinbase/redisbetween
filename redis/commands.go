@@ -1,4 +1,4 @@
-package proxy
+package redis
 
 var SupportedCommands = map[string]bool{
 	"APPEND":               true,
@@ -16,6 +16,7 @@ var SupportedCommands = map[string]bool{
 	"EVALSHA":              true,
 	"EXPIRE":               true,
 	"EXPIREAT":             true,
+	"FLUSHALL":             true,
 	"FLUSHDB":              true,
 	"GEOADD":               true,
 	"GEODIST":              true,
@@ -39,7 +40,7 @@ var SupportedCommands = map[string]bool{
 	"HLEN":                 true,
 	"HMGET":                true,
 	"HMSET":                true,
-	"HOST":                 true,
+	"HOST":                 true, // this looks like an old command. not supported in redis 6
 	"HSCAN":                true,
 	"HSET":                 true,
 	"HSETNX":               true,
@@ -48,7 +49,7 @@ var SupportedCommands = map[string]bool{
 	"INCR":                 true,
 	"INCRBY":               true,
 	"INCRBYFLOAT":          true,
-	"LASTSAVE":             true,
+	"LASTSAVE":             true, // this _should_ be aggregated
 	"LINDEX":               true,
 	"LINSERT":              true,
 	"LLEN":                 true,
@@ -60,8 +61,7 @@ var SupportedCommands = map[string]bool{
 	"LREM":                 true,
 	"LSET":                 true,
 	"LTRIM":                true,
-	"MOVE":                 true,
-	"MSET":                 true,
+	"MSET":                 true, // expected to behave differently for cluster / single
 	"MSETNX":               true,
 	"OBJECT":               true,
 	"PERSIST":              true,
@@ -151,6 +151,12 @@ var SupportedCommands = map[string]bool{
 	"UNLINK": true,
 }
 
+// these commands can't be made against secondaries, and must be run against each primary node separately
+var AggregateCommands = map[string]bool{
+	"FLUSHALL": true,
+	"FLUSHDB":  true,
+}
+
 var UnsupportedCommands = map[string]bool{
 	"ACL":          true,
 	"ASKING":       true,
@@ -160,7 +166,6 @@ var UnsupportedCommands = map[string]bool{
 	"CONFIG":       true,
 	"DBSIZE":       true, // doesnt make sense for clusters?
 	"DEBUG":        true,
-	"FLUSHALL":     true, // todo: investigate why this gets sent to secondaries sometimes
 	"HELLO":        true, // RESP3 protocol handshake
 	"INFO":         true,
 	"LATENCY":      true,
@@ -168,6 +173,7 @@ var UnsupportedCommands = map[string]bool{
 	"MIGRATE":      true,
 	"MODULE":       true,
 	"MONITOR":      true,
+	"MOVE":         true,
 	"PFDEBUG":      true,
 	"PFSELFTEST":   true,
 	"PSUBSCRIBE":   true,
@@ -235,5 +241,10 @@ func SupportedCommand(c string) bool {
 }
 func UnsupportedCommand(c string) bool {
 	_, ok := UnsupportedCommands[c]
+	return ok
+}
+
+func AggregateCommand(c string) bool {
+	_, ok := AggregateCommands[c]
 	return ok
 }
