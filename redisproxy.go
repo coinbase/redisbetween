@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.cbhq.net/engineering/redis-proxy/proxy"
+	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap/zapcore"
 	"os"
 	"os/signal"
@@ -16,8 +18,11 @@ import (
 
 func main() {
 	c := config.ParseFlags()
-	log := newLogger(c.LogLevel(), c.Pretty())
-	run(log, c)
+	log := newLogger(c.Level, c.Pretty)
+	err := run(log, c)
+	if err != nil {
+		log.Panic("error", zap.Error(err))
+	}
 }
 
 func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
@@ -41,8 +46,8 @@ func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
 	return log
 }
 
-func run(log *zap.Logger, config *config.Config) {
-	proxies, err := config.Proxies(log)
+func run(log *zap.Logger, cfg *config.Config) error {
+	proxies, err := proxies(cfg, log)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -79,6 +84,23 @@ func run(log *zap.Logger, config *config.Config) {
 	shutdownOnSignal(log, shutdown, kill)
 
 	log.Info("Running")
+
+	return nil
+}
+
+func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err error) {
+	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redis-proxy"))
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range c.Upstreams {
+		p, err := proxy.NewProxy(log, s, c, u.Label, u.LocalConfigHost, u.UpstreamConfigHost, u.Cluster, u.MinPoolSize, u.MaxPoolSize)
+		if err != nil {
+			return nil, err
+		}
+		proxies = append(proxies, p)
+	}
+	return
 }
 
 func shutdownOnSignal(log *zap.Logger, shutdownFunc func(), killFunc func()) {
