@@ -1,9 +1,12 @@
 package listener
 
 import (
+	"fmt"
 	"github.cbhq.net/engineering/redis-proxy/config"
 	"github.cbhq.net/engineering/redis-proxy/redis"
+	"github.cbhq.net/engineering/redis-proxy/util"
 	"net"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -11,8 +14,6 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap"
-
-	"github.com/coinbase/mongobetween/util"
 )
 
 const restartSleep = 1 * time.Second
@@ -22,55 +23,53 @@ type Listener struct {
 	statsd *statsd.Client
 	cfg    *config.Config
 
+	Address  string
 	network  string
-	address  string
 	handler  ConnectionHandler
 	shutdown ShutdownHandler
 
-	quit   chan interface{}
-	kill   chan interface{}
-	events chan interface{}
+	quit chan interface{}
+	kill chan interface{}
 }
 
-type ConnectionHandler func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}, events chan interface{})
+type ConnectionHandler func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{})
 type ShutdownHandler func()
 
-func New(log *zap.Logger, sd *statsd.Client, cfg *config.Config, network, address string, handler ConnectionHandler, shutdown ShutdownHandler, events chan interface{}) (*Listener, error) {
+func New(log *zap.Logger, sd *statsd.Client, cfg *config.Config, network, address string, handler ConnectionHandler, shutdown ShutdownHandler) (*Listener, error) {
 	return &Listener{
 		log:    log,
 		statsd: sd,
 		cfg:    cfg,
 
+		Address:  address,
 		network:  network,
-		address:  address,
 		handler:  handler,
 		shutdown: shutdown,
 
-		quit:   make(chan interface{}),
-		kill:   make(chan interface{}),
-		events: events,
+		quit: make(chan interface{}),
+		kill: make(chan interface{}),
 	}, nil
 }
 
 func (l *Listener) Run() error {
-	//defer func() {
-	//	if r := recover(); r != nil {
-	//		l.log.Error("Crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
-	//
-	//		time.Sleep(restartSleep)
-	//
-	//		l.log.Info("Restarting", zap.Duration("sleep", restartSleep))
-	//		go func() {
-	//			err := l.Run()
-	//			if err != nil {
-	//				l.log.Error("Error restarting", zap.Error(err))
-	//			}
-	//		}()
-	//	} else {
-	//		l.shutdown()
-	//		l.log.Info("Shutting down")
-	//	}
-	//}()
+	defer func() {
+		if r := recover(); r != nil {
+			l.log.Error("Crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
+
+			time.Sleep(restartSleep)
+
+			l.log.Info("Restarting", zap.Duration("sleep", restartSleep))
+			go func() {
+				err := l.Run()
+				if err != nil {
+					l.log.Error("Error restarting", zap.Error(err))
+				}
+			}()
+		} else {
+			l.shutdown()
+			l.log.Info("Shutting down")
+		}
+	}()
 
 	return l.listen()
 }
@@ -96,11 +95,11 @@ func (l *Listener) listen() error {
 		oldUmask := syscall.Umask(0)
 		defer syscall.Umask(oldUmask)
 		if l.cfg.Unlink {
-			_ = syscall.Unlink(l.address)
+			_ = syscall.Unlink(l.Address)
 		}
 	}
 
-	li, err := net.Listen(l.network, l.address)
+	li, err := net.Listen(l.network, l.Address)
 	if err != nil {
 		return err
 	}
@@ -158,7 +157,7 @@ func (l *Listener) accept(li net.Listener) {
 			}()
 
 			log.Info("Accept")
-			l.handler(log, c, id, l.kill, l.events)
+			l.handler(log, c, id, l.kill)
 		}()
 
 		go func() {

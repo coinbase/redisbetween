@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const defaultPort = "27017"
+const defaultPort = "6379"
 
 // Address is a network address. It can either be an IP address or a DNS name.
 type Address string

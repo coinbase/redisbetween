@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  redis-cluster:
+    image: 'grokzen/redis-cluster:6.0.9'
+    environment:
+      IP: ${REDIS_CLUSTER_IP}
+      SENTINEL: 'false'
+      STANDALONE: '1'
+    hostname: server
+    ports:
+      - '7000-7050:7000-7050'
+      - '5000-5010:5000-5010'

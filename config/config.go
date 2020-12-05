@@ -70,12 +70,10 @@ func parseFlags() (*Config, error) {
 	}
 
 	var network, localSocketPrefix, localSocketSuffix, stats, loglevel string
-	//var configHostMap string
 	var localPortStart int
 	var readTimeout, writeTimeout time.Duration
 	var pretty, unlink bool
 	flag.StringVar(&network, "network", "unix", "One of: tcp, tcp4, tcp6, unix or unixpacket")
-	//flag.StringVar(&localConfigHost, "localconfig", ":6380", "Address to listen on for elasticache-like config server responses")
 	flag.StringVar(&localSocketPrefix, "localsocketprefix", "/var/tmp/redis-proxy-", "Prefix to use for unix socket filenames")
 	flag.StringVar(&localSocketSuffix, "localsocketsuffix", ".sock", "Suffix to use for unix socket filenames")
 	flag.IntVar(&localPortStart, "localportstart", 6381, "Port number to start from for local proxies")

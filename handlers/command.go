@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
@@ -20,16 +21,17 @@ type connection struct {
 	statsd *statsd.Client
 	cfg    *config.Config
 
-	ctx     context.Context
-	conn    net.Conn
-	address string
-	id      uint64
-	server  *redis.Server
-	kill    chan interface{}
-	events  chan interface{}
+	ctx         context.Context
+	conn        net.Conn
+	address     string
+	id          uint64
+	server      *redis.Server
+	kill        chan interface{}
+	interceptor MessageInterceptor
 }
+type MessageInterceptor func(incomingCmd string, m *redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, cfg *config.Config, conn net.Conn, address string, id uint64, server *redis.Server, kill chan interface{}, events chan interface{}) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, cfg *config.Config, conn net.Conn, address string, id uint64, server *redis.Server, kill chan interface{}, interceptor MessageInterceptor) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -37,16 +39,16 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, cfg *config.Config, c
 	}()
 
 	c := connection{
-		log:     log,
-		statsd:  sd,
-		cfg:     cfg,
-		ctx:     context.Background(),
-		conn:    conn,
-		address: address,
-		id:      id,
-		server:  server,
-		kill:    kill,
-		events:  events,
+		log:         log,
+		statsd:      sd,
+		cfg:         cfg,
+		ctx:         context.Background(),
+		conn:        conn,
+		address:     address,
+		id:          id,
+		server:      server,
+		kill:        kill,
+		interceptor: interceptor,
 	}
 	c.processMessages()
 }
@@ -84,13 +86,22 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		return l, err
 	}
 
-	// todo are you a CLUSTER SLOTS message? we need to rewrite you
+	// todo check original command, pass as arg to interceptor
+	var incomingCmd string
+	if wm.IsArray() {
+		incomingCmd = strings.ToUpper(string(wm.Array[0].Value))
+		if incomingCmd == "CLUSTER" && len(wm.Array) > 1 {
+			// we only need to parse the next element if this is a CLUSTER command, for the
+			// CLUSTER SLOTS and CLUSTER NODES cases
+			incomingCmd += " " + strings.ToUpper(string(wm.Array[1].Value))
+		}
+	}
 
 	if wm, l, err = c.roundTrip(wm); err != nil {
 		return l, err
 	}
 
-	// todo are you a MOVED message? we need to rewrite you
+	c.interceptor(incomingCmd, wm)
 
 	err = WriteWireMessage(c.ctx, l, wm, c.conn, c.address, c.id, 0, c.conn.Close)
 	return l, err
@@ -193,52 +204,4 @@ func ReadWireMessage(ctx context.Context, log *zap.Logger, nc net.Conn, address 
 	}
 
 	return redis.Decode(nc)
-
-	//// We use an array here because it only costs 24 bytes on the stack and means we'll only need to
-	//// reslice dst once instead of twice.
-	//var headerBuf [24]byte
-	//
-	//// We do a ReadFull into an array here instead of doing an opportunistic ReadAtLeast into dst
-	//// because there might be more than one wire message waiting to be read, for example when
-	//// reading messages from an exhaust cursor.
-	//_, err := io.ReadFull(nc, headerBuf[:])
-	//if err != nil {
-	//	// We closeConnection the connection because we don't know if there are other bytes left to read.
-	//	_ = close()
-	//	if err == io.EOF {
-	//		return nil, err
-	//	}
-	//	return nil, redis.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "incomplete read of message header"}
-	//}
-	//
-	//// read the length as an int32
-	//size := 24 + ((int32(headerBuf[11])) | (int32(headerBuf[10]) << 8) | (int32(headerBuf[9]) << 16) | (int32(headerBuf[8]) << 24))
-	//
-	//log.Debug("Read header", zap.String("address", address), zap.Int("length", 24), zap.Int32("size", size-24), zap.String("hex", hex.EncodeToString(headerBuf[:])))
-	//
-	//if int(size) > cap(dst) {
-	//	// Since we can't grow this slice without allocating, just allocate an entirely new slice.
-	//	dst = make([]byte, 0, size)
-	//}
-	//// We need to ensure we don't accidentally read into a subsequent wire message, so we set the
-	//// size to read exactly this wire message.
-	//dst = dst[:size]
-	//copy(dst, headerBuf[:])
-	//
-	//if size > 24 {
-	//	_, err = io.ReadFull(nc, dst[24:])
-	//	if err != nil {
-	//		// We closeConnection the connection because we don't know if there are other bytes left to read.
-	//		_ = close()
-	//		return nil, redis.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "incomplete read of full message"}
-	//	}
-	//
-	//	max := int32(64)
-	//	if size < max {
-	//		max = size
-	//	}
-	//	log.Debug("Read", zap.String("address", address), zap.Int32("length", size-24), zap.String("hex", hex.EncodeToString(dst[24:max])))
-	//}
-	//
-	//return dst, nil
 }
