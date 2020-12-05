@@ -37,7 +37,6 @@ type Config struct {
 
 type Upstream struct {
 	UpstreamConfigHost string
-	LocalConfigHost    string
 	Label              string
 	MaxPoolSize        int
 	MinPoolSize        int
@@ -105,14 +104,7 @@ func parseFlags() (*Config, error) {
 			return r == '|' || r == '\n'
 		})
 		for _, v := range all {
-			split := strings.SplitN(v, "=", 2)
-			if len(split) != 2 {
-				return nil, errors.New("malformed host:uri option")
-			}
-
-			// split[0] -> localHost
-			// split[1] -> remoteHost
-			u, err := url.Parse(split[1])
+			u, err := url.Parse(v)
 			if err != nil {
 				return nil, err
 			}
@@ -124,7 +116,6 @@ func parseFlags() (*Config, error) {
 
 			us := Upstream{
 				UpstreamConfigHost: u.Host,
-				LocalConfigHost:    split[0],
 				Label:              getStringParam(params, "label", ""),
 				MaxPoolSize:        getIntParam(params, "maxpoolsize", 10),
 				MinPoolSize:        getIntParam(params, "minpoolsize", 1),

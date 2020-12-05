@@ -47,7 +47,7 @@ type Proxy struct {
 	listenerWg   sync.WaitGroup
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, localHost, upstreamHost string, cluster bool, minPoolSize, maxPoolSize int) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, cluster bool, minPoolSize, maxPoolSize int) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -63,7 +63,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		config: config,
 
 		upstreamConfigHost: upstreamHost,
-		localConfigHost:    localHost,
+		localConfigHost:    localSocketPathFromUpstream(upstreamHost, config.LocalSocketPrefix, config.LocalSocketSuffix),
 		minPoolSize:        minPoolSize,
 		maxPoolSize:        maxPoolSize,
 		cluster:            cluster,
@@ -199,14 +199,18 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 	}
 }
 
+func localSocketPathFromUpstream(upstream, prefix, suffix string) string {
+	parts := strings.Split(upstream, ":")
+	return fmt.Sprintf("%s%s-%s%s", prefix, parts[0], parts[1], suffix)
+}
+
 func (p *Proxy) ensureListenerForUpstream(upstream string) {
 	p.log.Info("ensuring we have a listener for", zap.String("upstream", upstream))
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
 	_, ok := p.listeners[upstream]
 	if !ok {
-		parts := strings.Split(upstream, ":")
-		local := fmt.Sprintf("%s%s-%s%s", p.config.LocalSocketPrefix, parts[0], parts[1], p.config.LocalSocketSuffix)
+		local := localSocketPathFromUpstream(upstream, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
 		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local))
 		l, err := p.createListener(local, upstream)
 		if err != nil {
