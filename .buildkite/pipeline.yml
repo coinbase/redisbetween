@@ -20,7 +20,7 @@ steps:
       GOPROXY: https://gomodules.cbhq.net/
     plugins:
       - file:///buildkite/plugins/docker-compose:
-          run: redis-cluster
+          run: redisbetween
           config: .buildkite/docker-compose.test.yml
           propagate-uid-gid: true
     agents:
