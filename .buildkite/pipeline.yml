@@ -20,7 +20,7 @@ steps:
       GOPROXY: https://gomodules.cbhq.net/
     plugins:
       - file:///buildkite/plugins/docker-compose:
-          run: golang-1.14
+          run: go
           config: ./docker-compose.yml
           propagate-uid-gid: true
           env:
