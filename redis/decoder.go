@@ -52,11 +52,11 @@ func Btoi64(b []byte) (int64, error) {
 		}
 	}
 
-	if n, err := strconv.ParseInt(string(b), 10, 64); err != nil {
+	n, err := strconv.ParseInt(string(b), 10, 64)
+	if err != nil {
 		return 0, err
-	} else {
-		return n, nil
 	}
+	return n, nil
 }
 
 type Decoder struct {
@@ -135,11 +135,11 @@ func (d *Decoder) decodeTextBytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n := len(b) - 2; n < 0 || b[n] != '\r' {
+	n := len(b) - 2
+	if n < 0 || b[n] != '\r' {
 		return nil, ErrBadCRLFEnd
-	} else {
-		return b[:n], nil
 	}
+	return b[:n], nil
 }
 
 func (d *Decoder) decodeInt() (int64, error) {
@@ -147,11 +147,11 @@ func (d *Decoder) decodeInt() (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if n := len(b) - 2; n < 0 || b[n] != '\r' {
+	n := len(b) - 2
+	if n < 0 || b[n] != '\r' {
 		return 0, ErrBadCRLFEnd
-	} else {
-		return Btoi64(b[:n])
 	}
+	return Btoi64(b[:n])
 }
 
 func (d *Decoder) decodeBulkBytes() ([]byte, error) {

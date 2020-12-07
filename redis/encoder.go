@@ -159,26 +159,24 @@ func (e *Encoder) encodeInt(v int64) error {
 func (e *Encoder) encodeBulkBytes(b []byte) error {
 	if b == nil {
 		return e.encodeInt(-1)
-	} else {
-		if err := e.encodeInt(int64(len(b))); err != nil {
-			return err
-		}
-		return e.encodeTextBytes(b)
 	}
+	if err := e.encodeInt(int64(len(b))); err != nil {
+		return err
+	}
+	return e.encodeTextBytes(b)
 }
 
 func (e *Encoder) encodeArray(array []*Message) error {
 	if array == nil {
 		return e.encodeInt(-1)
-	} else {
-		if err := e.encodeInt(int64(len(array))); err != nil {
+	}
+	if err := e.encodeInt(int64(len(array))); err != nil {
+		return err
+	}
+	for _, r := range array {
+		if err := e.encodeResp(r); err != nil {
 			return err
 		}
-		for _, r := range array {
-			if err := e.encodeResp(r); err != nil {
-				return err
-			}
-		}
-		return nil
 	}
+	return nil
 }

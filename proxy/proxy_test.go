@@ -103,6 +103,7 @@ func setupProxy(t *testing.T, upstreamPort string, cluster bool) func() {
 	}
 
 	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, -1, cluster, 1, 1)
+	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run()
 		assert.NoError(t, err)

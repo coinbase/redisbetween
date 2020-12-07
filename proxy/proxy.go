@@ -31,10 +31,8 @@ type Proxy struct {
 
 	config *config.Config
 
-	network            string
 	upstreamConfigHost string
 	localConfigHost    string
-	unlink             bool
 	maxPoolSize        int
 	minPoolSize        int
 	cluster            bool
