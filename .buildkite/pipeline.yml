@@ -22,5 +22,12 @@ steps:
       - file:///buildkite/plugins/docker:
           image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/golang-1.14:production
           propagate-environment: true
+      - file:///buildkite/plugins/docker-compose:
+          run: golang-1.14
+          config: docker-compose.yml
+          propagate-uid-gid: true
+          env:
+            - REDIS_CLUSTER_IP
+          disable: false
     agents:
       queue: docker
