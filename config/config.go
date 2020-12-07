@@ -72,7 +72,7 @@ func parseFlags() (*Config, error) {
 	var readTimeout, writeTimeout time.Duration
 	var pretty, unlink bool
 	flag.StringVar(&network, "network", "unix", "One of: tcp, tcp4, tcp6, unix or unixpacket")
-	flag.StringVar(&localSocketPrefix, "localsocketprefix", "/var/tmp/redis-proxy-", "Prefix to use for unix socket filenames")
+	flag.StringVar(&localSocketPrefix, "localsocketprefix", "/var/tmp/redisbetween-", "Prefix to use for unix socket filenames")
 	flag.StringVar(&localSocketSuffix, "localsocketsuffix", ".sock", "Suffix to use for unix socket filenames")
 	flag.BoolVar(&unlink, "unlink", false, "Unlink existing unix sockets before listening")
 	flag.DurationVar(&readTimeout, "readtimeout", 1*time.Second, "Read timeout")

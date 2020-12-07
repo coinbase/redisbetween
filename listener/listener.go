@@ -2,9 +2,9 @@ package listener
 
 import (
 	"fmt"
-	"github.cbhq.net/engineering/redis-proxy/config"
-	"github.cbhq.net/engineering/redis-proxy/redis"
-	"github.cbhq.net/engineering/redis-proxy/util"
+	"github.cbhq.net/engineering/redisbetween/config"
+	"github.cbhq.net/engineering/redisbetween/redis"
+	"github.cbhq.net/engineering/redisbetween/util"
 	"net"
 	"runtime/debug"
 	"strings"

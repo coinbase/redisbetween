@@ -2,7 +2,7 @@ package proxy
 
 import (
 	"context"
-	"github.cbhq.net/engineering/redis-proxy/config"
+	"github.cbhq.net/engineering/redisbetween/config"
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +22,7 @@ import (
 func TestProxy(t *testing.T) {
 	sd := setupProxy(t, "7006", false)
 
-	client := setupStandaloneClient(t, "/var/tmp/redis-proxy-127.0.0.1-7006.sock")
+	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
 	assert.NoError(t, res.Err())
 	res = client.Do(context.Background(), "set", "hello", "world")
@@ -44,7 +44,7 @@ type command struct {
 func TestIntegrationCommands(t *testing.T) {
 	shutdownProxy := setupProxy(t, "7000", true)
 
-	clusterClient := setupClusterClient(t, "/var/tmp/redis-proxy-127.0.0.1-7000.sock")
+	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-127.0.0.1-7000.sock")
 
 	var i int
 	var wg sync.WaitGroup
@@ -97,7 +97,7 @@ func setupProxy(t *testing.T, upstreamPort string, cluster bool) func() {
 
 	cfg := &config.Config{
 		Network:           "unix",
-		LocalSocketPrefix: "/var/tmp/redis-proxy-",
+		LocalSocketPrefix: "/var/tmp/redisbetween-",
 		LocalSocketSuffix: ".sock",
 		Unlink:            true,
 	}
@@ -138,7 +138,7 @@ func setupClusterClient(t *testing.T, address string) *redis.ClusterClient {
 				if err != nil {
 					return nil, err
 				}
-				addr = "/var/tmp/redis-proxy-" + host + "-" + port + ".sock"
+				addr = "/var/tmp/redisbetween-" + host + "-" + port + ".sock"
 				network = "unix"
 			}
 			return net.Dial(network, addr)

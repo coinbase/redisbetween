@@ -1,27 +1,27 @@
-# redis-proxy
+# redisbetween
 
 This is a connection pooling proxy for redis. It was originally built because the Monorail was hitting AWS elasticache
 connection limits against its redis clusters. Its purpose is to solve a specific problem: many application processes
 that cannot otherwise share a connection pool need to connect to a single redis cluster.
 
-redis-proxy supports both standalone and clustered redis deployments with the following caveats:
+redisbetween supports both standalone and clustered redis deployments with the following caveats:
 
 - **Blocking Commands** that cause the client to hold a connection open such as `BLPOP`, `BRPOPLPUSH`, `SUBSCRIBE` and
-`WAIT` are not allowed by redis-proxy because of the risk of exhausting the connection pool. redis-proxy is not a good
+`WAIT` are not allowed by redisbetween because of the risk of exhausting the connection pool. redisbetween is not a good
 solution for clients like sidekiq that rely heavily on these blocking commands.
 
 - **Transactions** are not supported. This means that the commands `DISCARD`, `EXEC`, `MULTI`, `UNWATCH` and `WATCH`
 will return errors from the proxy before they reach an upstream host. This is because redis stores state about open
 transactions on the server side, attached to each client connection. In order to support transactions, each one would
-have to pin a connection from the pool to a single client while a transaction were open. redis-proxy disables these
+have to pin a connection from the pool to a single client while a transaction were open. redisbetween disables these
 commands to avoid cases where applications could accidentally exhaust the connection pool.
 
-- **Pipelines** are not supported. It may be possible to add support for pipelines to redis-proxy in the future.
+- **Pipelines** are not supported. It may be possible to add support for pipelines to redisbetween in the future.
 
 - The **SELECT** command, which is used by redis clients when connecting to a db other than the default `0`, is not
-allowed. However, redis-proxy _does_ support multiple dbs by specifying the db number in the endpoint url path. With an
+allowed. However, redisbetween _does_ support multiple dbs by specifying the db number in the endpoint url path. With an
 example URL of `redis://example.com/3`, the resulting connection pool would be mapped to the socket path
-`/var/tmp/redis-proxy-example.com-3.sock` suffix, and all connections would issue a `SELECT 3` command before entering
+`/var/tmp/redisbetween-example.com-3.sock` suffix, and all connections would issue a `SELECT 3` command before entering
 the pool. Note that each db number gets its own connection pool, so adjust `maxpoolsize` accordingly when using this
 feature.
 
@@ -30,15 +30,15 @@ could add support by pre-emptively sending the AUTH command on all new connectio
 
 ### How it works
 
-redis-proxy creates a connection pool for each upstream redis server it discovers (either via configuration at start
+redisbetween creates a connection pool for each upstream redis server it discovers (either via configuration at start
 time, snooping on `CLUSTER` commands or via `ASK`/`MOVED` errors) and maps a local unix socket to that pool.
 Applications running on the same host can connect to redis via this unix socket instead of connecting directly to the
 redis server, thus sharing a relatively smaller number of connections among the many processes on a machine.
 
-Upon startup, redis-proxy creates a pool of connections to the redis endpoint provided and listens on a unix socket
-named after the endpoint. By default, it will be named `/var/tmp/redis-proxy-${host}-${port}(-${db}).sock`. This can be
+Upon startup, redisbetween creates a pool of connections to the redis endpoint provided and listens on a unix socket
+named after the endpoint. By default, it will be named `/var/tmp/redisbetween-${host}-${port}(-${db}).sock`. This can be
 customized using the `-localsocketprefix` and `-localsocketsuffix` options. For standalone redis deployments, this will
-be the only socket created. However, redis-proxy will inspect responses to `CLUSTER` commands, looking for references to
+be the only socket created. However, redisbetween will inspect responses to `CLUSTER` commands, looking for references to
 cluster members that it hasn't yet seen. When it sees a new cluster member, it allocates a new connection pool and unix
 socket for it before relaying the response to the client.
 
@@ -48,10 +48,10 @@ socket for it before relaying the response to the client.
 ```ruby
 module RedisPatch
   def initialize(options = {})
-    if options[:convert_to_redis_proxy_socket]
+    if options[:convert_to_redisbetween_socket]
       u = URI(options[:url])
       path = u.path.empty? ? nil : u.path.delete_prefix('/')
-      u.path = ['/var/tmp/redis-proxy', u.host, u.port, path].compact.join('-') + '.sock'
+      u.path = ['/var/tmp/redisbetween', u.host, u.port, path].compact.join('-') + '.sock'
       u.host = nil
       u.port = nil
       u.scheme = 'unix'
@@ -64,8 +64,8 @@ end
 
 Redis::Client.prepend(RedisPatch)
 
-cluster = Redis.new(cluster: [{ host: 'some.redis.cluster.com' }], convert_to_redis_proxy_socket: true)
-standalone = Redis.new(url: 'redis://some.redis.server.com/3', convert_to_redis_proxy_socket: true)
+cluster = Redis.new(cluster: [{ host: 'some.redis.cluster.com' }], convert_to_redisbetween_socket: true)
+standalone = Redis.new(url: 'redis://some.redis.server.com/3', convert_to_redisbetween_socket: true)
 puts cluster.cluster("slots")
 puts standalone.get("hi")
 ```
@@ -82,7 +82,7 @@ opt := &redis.ClusterOptions{
             if err != nil {
                 return nil, err
             }
-            addr = "/var/tmp/redis-proxy-" + host + "-" + port + ".sock"
+            addr = "/var/tmp/redisbetween-" + host + "-" + port + ".sock"
             network = "unix"
         }
         return net.Dial(network, addr)
@@ -94,14 +94,14 @@ res := client.Do(context.Background(), "ping")
 
 ### Installation
 ```
-go install github.cbhq.net/engineering/redis-proxy
+go install github.cbhq.net/engineering/redisbetween
 ```
 
 ### Usage
 ```
-Usage: bin/redis-proxy [OPTIONS] uri1 [uri2] ...
+Usage: bin/redisbetween [OPTIONS] uri1 [uri2] ...
   -localsocketprefix string
-    	prefix to use for unix socket filenames (default "/var/tmp/redis-proxy-")
+    	prefix to use for unix socket filenames (default "/var/tmp/redisbetween-")
   -localsocketsuffix string
     	suffix to use for unix socket filenames (default ".sock")
   -loglevel string

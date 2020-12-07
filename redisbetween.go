@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.cbhq.net/engineering/redis-proxy/proxy"
+	"github.cbhq.net/engineering/redisbetween/proxy"
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap/zapcore"
 	"os"
@@ -13,7 +13,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.cbhq.net/engineering/redis-proxy/config"
+	"github.cbhq.net/engineering/redisbetween/config"
 )
 
 func main() {
@@ -89,7 +89,7 @@ func run(log *zap.Logger, cfg *config.Config) error {
 }
 
 func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err error) {
-	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redis-proxy"))
+	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redisbetween"))
 	if err != nil {
 		return nil, err
 	}

@@ -3,8 +3,8 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"github.cbhq.net/engineering/redis-proxy/config"
-	"github.cbhq.net/engineering/redis-proxy/redis"
+	"github.cbhq.net/engineering/redisbetween/config"
+	"github.cbhq.net/engineering/redisbetween/redis"
 	"github.com/CodisLabs/codis/pkg/utils/log"
 	"io"
 	"net"
@@ -91,7 +91,7 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		incomingCmd = strings.ToUpper(string(wm.Array[0].Value))
 
 		if _, ok := UnsupportedCommands[incomingCmd]; ok {
-			em := redis.NewError([]byte(fmt.Sprintf("redis-proxy: %v is unsupported", incomingCmd)))
+			em := redis.NewError([]byte(fmt.Sprintf("redisbetween: %v is unsupported", incomingCmd)))
 			err = WriteWireMessage(c.ctx, l, em, c.conn, c.address, c.id, 0, c.conn.Close)
 			return l, err
 		}

@@ -17,8 +17,8 @@ func TestParseFlags(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
-		"redis-proxy",
-		"-localsocketprefix", "/some/path/redis-proxy-",
+		"redisbetween",
+		"-localsocketprefix", "/some/path/redisbetween-",
 		"-localsocketsuffix", ".socket",
 		"-loglevel", "debug",
 		"-network", "unix",
@@ -65,7 +65,7 @@ func TestNoDatabaseIdForClusters(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
-		"redis-proxy",
+		"redisbetween",
 		"-loglevel", "info",
 		"redis://localhost/1?minpoolsize=5&label=cluster1&cluster=true",
 	}
@@ -79,7 +79,7 @@ func TestInvalidLogLevel(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
-		"redis-proxy",
+		"redisbetween",
 		"-loglevel", "wrong",
 		"redis://localhost?minpoolsize=5&label=cluster1",
 	}
@@ -93,7 +93,7 @@ func TestInvalidNetwork(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
-		"redis-proxy",
+		"redisbetween",
 		"-network", "wrong",
 		"redis://localhost?minpoolsize=5&label=cluster1",
 	}
@@ -107,7 +107,7 @@ func TestAddressCollision(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
-		"redis-proxy",
+		"redisbetween",
 		"redis://localhost?minpoolsize=5&label=cluster1",
 		"redis://localhost?minpoolsize=10&label=cluster2",
 	}

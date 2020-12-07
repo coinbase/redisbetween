@@ -31,7 +31,7 @@ var UnsupportedCommands = map[string]bool{
 	"PSUBSCRIBE":   true,
 
 	// these commands also store connection state on the server, and so won't work
-	// with redis-proxy without some special work to support them
+	// with redisbetween without some special work to support them
 	"AUTH":   true,
 	"SELECT": true,
 }

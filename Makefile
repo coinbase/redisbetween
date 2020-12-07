@@ -1,7 +1,7 @@
 .PHONY: build docker test lint
 
 build:
-	go build -o bin/redis-proxy .
+	go build -o bin/redisbetween .
 
 docker:
 	docker-compose up
