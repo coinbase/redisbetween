@@ -21,10 +21,9 @@ steps:
     plugins:
       - file:///buildkite/plugins/docker-compose:
           run: golang-1.14
-          config: docker-compose.yml
+          config: ./docker-compose.yml
           propagate-uid-gid: true
           env:
             - REDIS_CLUSTER_IP
-          disable: false
     agents:
       queue: docker
