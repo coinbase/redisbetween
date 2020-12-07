@@ -1,7 +1,5 @@
 # redisbetween
 
-Hi.
-
 This is a connection pooling proxy for redis. It was originally built because the Monorail was hitting AWS elasticache
 connection limits against its redis clusters. Its purpose is to solve a specific problem: many application processes
 that cannot otherwise share a connection pool need to connect to a single redis cluster.

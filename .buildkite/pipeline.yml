@@ -19,8 +19,9 @@ steps:
       GONOSUMDB: github.cbhq.net
       GOPROXY: https://gomodules.cbhq.net/
     plugins:
-      - file:///buildkite/plugins/docker:
-          image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/golang-1.14:production
-          propagate-environment: true
+      - file:///buildkite/plugins/docker-compose:
+          run: redisbetween
+          config: .buildkite/docker-compose.test.yml
+          propagate-uid-gid: true
     agents:
       queue: docker
