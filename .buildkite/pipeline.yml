@@ -21,9 +21,7 @@ steps:
     plugins:
       - file:///buildkite/plugins/docker-compose:
           run: redis-cluster
-          config: ./docker-compose.yml
+          config: .buildkite/docker-compose.test.yml
           propagate-uid-gid: true
-          env:
-            - REDIS_CLUSTER_IP
     agents:
       queue: docker
