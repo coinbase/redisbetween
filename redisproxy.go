@@ -94,7 +94,7 @@ func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err err
 		return nil, err
 	}
 	for _, u := range c.Upstreams {
-		p, err := proxy.NewProxy(log, s, c, u.Label, u.UpstreamConfigHost, u.Cluster, u.MinPoolSize, u.MaxPoolSize)
+		p, err := proxy.NewProxy(log, s, c, u.Label, u.UpstreamConfigHost, u.Database, u.Cluster, u.MinPoolSize, u.MaxPoolSize)
 		if err != nil {
 			return nil, err
 		}

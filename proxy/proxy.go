@@ -13,6 +13,7 @@ import (
 	"github.com/mediocregopher/radix/v3"
 	"net"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ type Proxy struct {
 	maxPoolSize        int
 	minPoolSize        int
 	cluster            bool
-	topology           radix.ClusterTopo
+	database           int
 
 	quit chan interface{}
 	kill chan interface{}
@@ -47,7 +48,7 @@ type Proxy struct {
 	listenerWg   sync.WaitGroup
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, cluster bool, minPoolSize, maxPoolSize int) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, cluster bool, minPoolSize, maxPoolSize int) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -63,10 +64,11 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		config: config,
 
 		upstreamConfigHost: upstreamHost,
-		localConfigHost:    localSocketPathFromUpstream(upstreamHost, config.LocalSocketPrefix, config.LocalSocketSuffix),
+		localConfigHost:    localSocketPathFromUpstream(upstreamHost, database, config.LocalSocketPrefix, config.LocalSocketSuffix),
 		minPoolSize:        minPoolSize,
 		maxPoolSize:        maxPoolSize,
 		cluster:            cluster,
+		database:           database,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -199,9 +201,13 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 	}
 }
 
-func localSocketPathFromUpstream(upstream, prefix, suffix string) string {
-	parts := strings.Split(upstream, ":")
-	return fmt.Sprintf("%s%s-%s%s", prefix, parts[0], parts[1], suffix)
+func localSocketPathFromUpstream(upstream string, database int, prefix, suffix string) string {
+	hostPort := strings.Split(upstream, ":")
+	path := prefix + hostPort[0] + "-" + hostPort[1]
+	if database > -1 {
+		path += "-" + strconv.Itoa(database)
+	}
+	return path + suffix
 }
 
 func (p *Proxy) ensureListenerForUpstream(upstream string) {
@@ -210,7 +216,7 @@ func (p *Proxy) ensureListenerForUpstream(upstream string) {
 	defer p.listenerLock.Unlock()
 	_, ok := p.listeners[upstream]
 	if !ok {
-		local := localSocketPathFromUpstream(upstream, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+		local := localSocketPathFromUpstream(upstream, p.database, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
 		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local))
 		l, err := p.createListener(local, upstream)
 		if err != nil {
@@ -246,5 +252,8 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 		defer cancel()
 		_ = m.Disconnect(ctx)
 	}
+
+	// TODO send the SELECT command if p.database > -1
+
 	return listener.New(logWith, sdWith, p.config, p.config.Network, local, connectionHandler, shutdownHandler)
 }

@@ -12,8 +12,6 @@ import (
 	"testing"
 )
 
-var tmap = make(map[int64][]byte)
-
 func init() {
 	var n = len(itoaOffset)*2 + 100000
 	for i := -n; i <= n; i++ {
@@ -76,7 +74,7 @@ func TestEncodeArray(t *testing.T) {
 	testEncodeAndCheck(t, resp, []byte("*3\r\n:0\r\n$-1\r\n$4\r\ntest\r\n"))
 }
 
-func testEncodeAndCheck(t *testing.T, resp *Resp, expect []byte) {
+func testEncodeAndCheck(t *testing.T, resp *Message, expect []byte) {
 	b, err := EncodeToBytes(resp)
 	assert.NoError(t, err)
 	assert.True(t, bytes.Equal(b, expect))
@@ -87,14 +85,14 @@ func newBenchmarkEncoder(n int) *Encoder {
 }
 
 func benchmarkEncode(b *testing.B, n int) {
-	multi := []*Resp{
+	multi := []*Message{
 		NewBulkBytes(make([]byte, n)),
 	}
 	e := newBenchmarkEncoder(n)
 	for i := 0; i < b.N; i++ {
-		assert.NoError(t, e.EncodeMultiBulk(multi, false))
+		assert.NoError(b, e.EncodeMultiBulk(multi, false))
 	}
-	assert.NoError(t, e.Flush())
+	assert.NoError(b, e.Flush())
 }
 
 func BenchmarkEncode16B(b *testing.B)  { benchmarkEncode(b, 16) }

@@ -21,7 +21,6 @@ type Config struct {
 	Network           string
 	LocalSocketPrefix string
 	LocalSocketSuffix string
-	LocalPortStart    int
 	Unlink            bool
 
 	MinPoolSize  uint64
@@ -41,6 +40,7 @@ type Upstream struct {
 	MaxPoolSize        int
 	MinPoolSize        int
 	Cluster            bool
+	Database           int
 }
 
 func ParseFlags() *Config {
@@ -64,18 +64,16 @@ func validNetwork(network string) bool {
 
 func parseFlags() (*Config, error) {
 	flag.Usage = func() {
-		fmt.Printf("Usage: %s [OPTIONS] address1=uri1 [address2=uri2] ...\n", os.Args[0])
+		fmt.Printf("Usage: %s [OPTIONS] uri1 [uri2] ...\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
 	var network, localSocketPrefix, localSocketSuffix, stats, loglevel string
-	var localPortStart int
 	var readTimeout, writeTimeout time.Duration
 	var pretty, unlink bool
 	flag.StringVar(&network, "network", "unix", "One of: tcp, tcp4, tcp6, unix or unixpacket")
 	flag.StringVar(&localSocketPrefix, "localsocketprefix", "/var/tmp/redis-proxy-", "Prefix to use for unix socket filenames")
 	flag.StringVar(&localSocketSuffix, "localsocketsuffix", ".sock", "Suffix to use for unix socket filenames")
-	flag.IntVar(&localPortStart, "localportstart", 6381, "Port number to start from for local proxies")
 	flag.BoolVar(&unlink, "unlink", false, "Unlink existing unix sockets before listening")
 	flag.DurationVar(&readTimeout, "readtimeout", 1*time.Second, "Read timeout")
 	flag.DurationVar(&writeTimeout, "writetimeout", 1*time.Second, "Write timeout")
@@ -97,8 +95,6 @@ func parseFlags() (*Config, error) {
 	}
 
 	var upstreams []Upstream
-	addrMap := make(map[string]bool)
-
 	for _, arg := range flag.Args() {
 		all := strings.FieldsFunc(arg, func(r rune) bool {
 			return r == '|' || r == '\n'
@@ -107,6 +103,14 @@ func parseFlags() (*Config, error) {
 			u, err := url.Parse(v)
 			if err != nil {
 				return nil, err
+			}
+
+			db := -1
+			if len(u.Path) > 1 {
+				db, err = strconv.Atoi(u.Path[1:])
+				if err != nil {
+					return nil, errors.New("failed to parse redis db number from path")
+				}
 			}
 
 			params, err := url.ParseQuery(u.RawQuery)
@@ -120,21 +124,29 @@ func parseFlags() (*Config, error) {
 				MaxPoolSize:        getIntParam(params, "maxpoolsize", 10),
 				MinPoolSize:        getIntParam(params, "minpoolsize", 1),
 				Cluster:            getBoolParam(params, "cluster", "true"),
+				Database:           db,
 			}
+
+			if us.Cluster && us.Database > -1 {
+				return nil, errors.New("redis cluster does not support multiple databases")
+			}
+
 			upstreams = append(upstreams, us)
 		}
 	}
 
 	if len(upstreams) == 0 {
-		return nil, errors.New("missing host=uri(s)")
+		return nil, errors.New("missing list of upstream hosts")
 	}
 
+	addrMap := make(map[string]bool)
 	for _, c := range upstreams {
-		_, ok := addrMap[c.UpstreamConfigHost]
+		key := c.UpstreamConfigHost + "/" + strconv.Itoa(c.Database)
+		_, ok := addrMap[key]
 		if ok {
 			return nil, fmt.Errorf("duplicate entry for address: %v", c.UpstreamConfigHost)
 		}
-		addrMap[c.UpstreamConfigHost] = true
+		addrMap[key] = true
 	}
 
 	return &Config{
@@ -143,7 +155,6 @@ func parseFlags() (*Config, error) {
 		Network:           network,
 		LocalSocketPrefix: localSocketPrefix,
 		LocalSocketSuffix: localSocketSuffix,
-		LocalPortStart:    localPortStart,
 		Unlink:            unlink,
 
 		ReadTimeout:  readTimeout,

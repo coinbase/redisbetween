@@ -18,62 +18,61 @@ func TestParseFlags(t *testing.T) {
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
 		"redis-proxy",
-		"-statsd", "statsd:1234",
+		"-localsocketprefix", "/some/path/redis-proxy-",
+		"-localsocketsuffix", ".socket",
 		"-loglevel", "debug",
 		"-network", "unix",
+		"-pretty",
+		"-readtimeout", "3s",
+		"-statsd", "statsd:1234",
 		"-unlink",
-		"/tmp/redis1.sock=redis://localhost:27127/0?poolsize=5&label=cluster1",
-		"/tmp/redis2.sock=redis://localhost:27128/1?poolsize=10&label=cluster2&cluster=true",
+		"-writetimeout", "4s",
+		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
+		"redis://localhost:7002?minpoolsize=10&label=cluster2&cluster=true",
 	}
 
 	resetFlags()
 	c, err := parseFlags()
 	fmt.Println(err)
-	assert.Nil(t, err)
+	assert.NoError(t, err)
 
-	assert.Equal(t, "statsd:1234", c.statsd)
-	assert.Equal(t, zapcore.DebugLevel, c.LogLevel())
-	assert.Equal(t, "unix", c.network)
-	assert.True(t, c.unlink)
+	assert.Equal(t, "statsd:1234", c.Statsd)
+	assert.Equal(t, zapcore.DebugLevel, c.Level)
+	assert.Equal(t, "unix", c.Network)
+	assert.True(t, c.Unlink)
 
-	assert.Equal(t, 2, len(c.clients))
-	client1 := c.clients[0]
-	client2 := c.clients[1]
-	if client1.label == "cluster2" {
-		temp := client1
-		client1 = client2
-		client2 = temp
+	assert.Equal(t, 2, len(c.Upstreams))
+	upstream1 := c.Upstreams[0]
+	upstream2 := c.Upstreams[1]
+	if upstream1.Label == "cluster2" {
+		temp := upstream1
+		upstream1 = upstream2
+		upstream2 = temp
 	}
 
-	assert.Equal(t, "cluster1", client1.label)
-	assert.Equal(t, "redis://localhost:27127/0?poolsize=5&label=cluster1", client1.host)
-	assert.Equal(t, 5, client1.poolSize)
+	assert.Equal(t, "cluster1", upstream1.Label)
+	assert.Equal(t, "localhost:7000", upstream1.UpstreamConfigHost)
+	assert.Equal(t, 5, upstream1.MinPoolSize)
+	assert.Equal(t, 0, upstream1.Database)
 
-	assert.Equal(t, "cluster2", client2.label)
-	assert.Equal(t, "redis://localhost:27128/1?poolsize=10&label=cluster2&cluster=true", client2.host)
-	assert.Equal(t, 10, client2.poolSize)
-	assert.True(t, client2.cluster)
+	assert.Equal(t, "cluster2", upstream2.Label)
+	assert.Equal(t, "localhost:7002", upstream2.UpstreamConfigHost)
+	assert.Equal(t, 10, upstream2.MinPoolSize)
+	assert.True(t, upstream2.Cluster)
 }
 
-func TestEnvExpansion(t *testing.T) {
-	env := "TEST_ENV"
-	oldEnv := os.Getenv(env)
-	defer func() { _ = os.Setenv(env, oldEnv) }()
-	_ = os.Setenv(env, "env_value")
-
+func TestNoDatabaseIdForClusters(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
 		"redis-proxy",
-		"-statsd", "before_${TEST_ENV}_after",
-		"/tmp/redis1.sock=redis://localhost:27127/0?poolsize=5&label=cluster1",
+		"-loglevel", "info",
+		"redis://localhost/1?minpoolsize=5&label=cluster1&cluster=true",
 	}
 
 	resetFlags()
-	c, err := parseFlags()
-	assert.Nil(t, err)
-
-	assert.Equal(t, "before_env_value_after", c.statsd)
+	_, err := parseFlags()
+	assert.EqualError(t, err, "redis cluster does not support multiple databases")
 }
 
 func TestInvalidLogLevel(t *testing.T) {
@@ -82,7 +81,7 @@ func TestInvalidLogLevel(t *testing.T) {
 	os.Args = []string{
 		"redis-proxy",
 		"-loglevel", "wrong",
-		"/tmp/redis1.sock=redis://localhost:27127/0?poolsize=5&label=cluster1",
+		"redis://localhost?minpoolsize=5&label=cluster1",
 	}
 
 	resetFlags()
@@ -96,7 +95,7 @@ func TestInvalidNetwork(t *testing.T) {
 	os.Args = []string{
 		"redis-proxy",
 		"-network", "wrong",
-		"/tmp/redis1.sock=redis://localhost:27127/0?poolsize=5&label=cluster1",
+		"redis://localhost?minpoolsize=5&label=cluster1",
 	}
 
 	resetFlags()
@@ -109,13 +108,13 @@ func TestAddressCollision(t *testing.T) {
 	defer func() { os.Args = oldArgs }()
 	os.Args = []string{
 		"redis-proxy",
-		"/tmp/redis1.sock=mongodb://localhost:27127/0?poolsize=5&label=cluster1",
-		"/tmp/redis1.sock=mongodb://localhost:27128/0?poolsize=10&label=cluster2",
+		"redis://localhost?minpoolsize=5&label=cluster1",
+		"redis://localhost?minpoolsize=10&label=cluster2",
 	}
 
 	resetFlags()
 	_, err := parseFlags()
-	assert.EqualError(t, err, "duplicate entry for address: /tmp/redis1.sock")
+	assert.EqualError(t, err, "duplicate entry for address: localhost")
 }
 
 func TestMissingAddresses(t *testing.T) {
@@ -127,5 +126,5 @@ func TestMissingAddresses(t *testing.T) {
 
 	resetFlags()
 	_, err := parseFlags()
-	assert.EqualError(t, err, "missing host=uri(s)")
+	assert.EqualError(t, err, "missing list of upstream hosts")
 }

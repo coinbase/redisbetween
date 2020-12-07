@@ -86,10 +86,16 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		return l, err
 	}
 
-	// todo check original command, pass as arg to interceptor
 	var incomingCmd string
 	if wm.IsArray() {
 		incomingCmd = strings.ToUpper(string(wm.Array[0].Value))
+
+		if _, ok := UnsupportedCommands[incomingCmd]; ok {
+			em := redis.NewError([]byte(fmt.Sprintf("redis-proxy: %v is unsupported", incomingCmd)))
+			err = WriteWireMessage(c.ctx, l, em, c.conn, c.address, c.id, 0, c.conn.Close)
+			return l, err
+		}
+
 		if incomingCmd == "CLUSTER" && len(wm.Array) > 1 {
 			// we only need to parse the next element if this is a CLUSTER command, for the
 			// CLUSTER SLOTS and CLUSTER NODES cases
