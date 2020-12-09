@@ -5,11 +5,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.cbhq.net/engineering/memcachedbetween/listener"
+	"github.cbhq.net/engineering/memcachedbetween/pool"
 	"github.cbhq.net/engineering/redisbetween/config"
 	"github.cbhq.net/engineering/redisbetween/handlers"
-	"github.cbhq.net/engineering/redisbetween/listener"
 	"github.cbhq.net/engineering/redisbetween/redis"
-	"github.cbhq.net/engineering/redisbetween/util"
+	"github.com/coinbase/mongobetween/util"
 	"github.com/mediocregopher/radix/v3"
 	"io"
 	"net"
@@ -232,17 +233,17 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	if err != nil {
 		return nil, err
 	}
-	opts := []redis.ServerOption{
-		redis.WithMinConnections(func(uint64) uint64 { return uint64(p.minPoolSize) }),
-		redis.WithMaxConnections(func(uint64) uint64 { return uint64(p.maxPoolSize) }),
-		redis.WithConnectionPoolMonitor(func(*redis.PoolMonitor) *redis.PoolMonitor { return poolMonitor(sdWith) }),
+	opts := []pool.ServerOption{
+		pool.WithMinConnections(func(uint64) uint64 { return uint64(p.minPoolSize) }),
+		pool.WithMaxConnections(func(uint64) uint64 { return uint64(p.maxPoolSize) }),
+		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sdWith) }),
 	}
 
 	// if a db number has been specified, we need to issue a SELECT command before adding
 	// that connection to the pool, so its always pinned to the right db
 	if p.database > -1 {
-		co := redis.WithDialer(func(dialer redis.Dialer) redis.Dialer {
-			return redis.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+		co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
+			return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
 				dlr := &net.Dialer{Timeout: 30 * time.Second}
 				conn, err := dlr.DialContext(ctx, network, address)
 				if err != nil {
@@ -262,12 +263,12 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 				return conn, err
 			})
 		})
-		opts = append(opts, redis.WithConnectionOptions(func(cos ...redis.ConnectionOption) []redis.ConnectionOption {
+		opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
 			return append(cos, co)
 		}))
 	}
 
-	s, err := redis.ConnectServer(redis.Address(upstream), opts...)
+	s, err := pool.ConnectServer(pool.Address(upstream), opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -281,15 +282,15 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 		_ = s.Disconnect(ctx)
 	}
 
-	return listener.New(logWith, sdWith, p.config, p.config.Network, local, connectionHandler, shutdownHandler)
+	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, shutdownHandler)
 }
 
-func poolMonitor(sd *statsd.Client) *redis.PoolMonitor {
+func poolMonitor(sd *statsd.Client) *pool.Monitor {
 	checkedOut, checkedIn := util.StatsdBackgroundGauge(sd, "pool.checked_out_connections", []string{})
 	opened, closed := util.StatsdBackgroundGauge(sd, "pool.open_connections", []string{})
 
-	return &redis.PoolMonitor{
-		Event: func(e *redis.PoolEvent) {
+	return &pool.Monitor{
+		Event: func(e *pool.Event) {
 			snake := strings.ToLower(regexp.MustCompile("([a-z0-9])([A-Z])").ReplaceAllString(e.Type, "${1}_${2}"))
 			name := fmt.Sprintf("pool_event.%s", snake)
 			tags := []string{
@@ -297,13 +298,13 @@ func poolMonitor(sd *statsd.Client) *redis.PoolMonitor {
 				fmt.Sprintf("reason:%s", e.Reason),
 			}
 			switch e.Type {
-			case redis.ConnectionCreated:
+			case pool.ConnectionCreated:
 				opened(name, tags)
-			case redis.ConnectionClosed:
+			case pool.ConnectionClosed:
 				closed(name, tags)
-			case redis.GetSucceeded:
+			case pool.GetSucceeded:
 				checkedOut(name, tags)
-			case redis.ConnectionReturned:
+			case pool.ConnectionReturned:
 				checkedIn(name, tags)
 			default:
 				_ = sd.Incr(name, tags, 1)

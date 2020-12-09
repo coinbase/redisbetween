@@ -20,3 +20,6 @@ services:
     working_dir: /project
     depends_on:
       - redis-cluster
+    environment:
+      GONOSUMDB: github.cbhq.net
+      GOPROXY: https://gomodules.cbhq.net/

@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"github.cbhq.net/engineering/memcachedbetween/pool"
 	"github.cbhq.net/engineering/redisbetween/config"
 	"github.cbhq.net/engineering/redisbetween/redis"
 	"github.com/CodisLabs/codis/pkg/utils/log"
@@ -25,13 +26,13 @@ type connection struct {
 	conn        net.Conn
 	address     string
 	id          uint64
-	server      *redis.Server
+	server      *pool.Server
 	kill        chan interface{}
 	interceptor MessageInterceptor
 }
 type MessageInterceptor func(incomingCmd string, m *redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, cfg *config.Config, conn net.Conn, address string, id uint64, server *redis.Server, kill chan interface{}, interceptor MessageInterceptor) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, cfg *config.Config, conn net.Conn, address string, id uint64, server *pool.Server, kill chan interface{}, interceptor MessageInterceptor) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -118,7 +119,7 @@ func (c *connection) roundTrip(wm *redis.Message) (*redis.Message, *zap.Logger, 
 	l := c.log
 	var err error
 
-	var conn *redis.Connection
+	var conn *pool.Connection
 	if conn, err = c.checkoutConnection(); err != nil {
 		return nil, l, err
 	}
@@ -137,7 +138,7 @@ func (c *connection) roundTrip(wm *redis.Message) (*redis.Message, *zap.Logger, 
 	return res, l, err
 }
 
-func (c *connection) checkoutConnection() (conn *redis.Connection, err error) {
+func (c *connection) checkoutConnection() (conn *pool.Connection, err error) {
 	defer func(start time.Time) {
 		addr := ""
 		if conn != nil {
@@ -161,7 +162,7 @@ func WriteWireMessage(ctx context.Context, log *zap.Logger, wm *redis.Message, n
 	var err error
 	select {
 	case <-ctx.Done():
-		return redis.ConnectionError{Address: address, ID: id, Wrapped: ctx.Err(), Message: "failed to write"}
+		return pool.ConnectionError{Address: address, ID: id, Wrapped: ctx.Err(), Message: "failed to write"}
 	default:
 	}
 
@@ -175,14 +176,14 @@ func WriteWireMessage(ctx context.Context, log *zap.Logger, wm *redis.Message, n
 	}
 
 	if err := nc.SetWriteDeadline(deadline); err != nil {
-		return redis.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "failed to set write deadline"}
+		return pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "failed to set write deadline"}
 	}
 
 	err = redis.Encode(nc, wm)
 
 	if err != nil {
 		_ = close()
-		return redis.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "unable to write wire message to network"}
+		return pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "unable to write wire message to network"}
 	}
 	log.Debug("Write", zap.String("address", address))
 	return nil
@@ -193,7 +194,7 @@ func ReadWireMessage(ctx context.Context, log *zap.Logger, nc net.Conn, address 
 	case <-ctx.Done():
 		// We closeConnection the connection because we don't know if there is an unread message on the wire.
 		_ = close()
-		return nil, redis.ConnectionError{Address: address, ID: id, Wrapped: ctx.Err(), Message: "failed to read"}
+		return nil, pool.ConnectionError{Address: address, ID: id, Wrapped: ctx.Err(), Message: "failed to read"}
 	default:
 	}
 
@@ -207,7 +208,7 @@ func ReadWireMessage(ctx context.Context, log *zap.Logger, nc net.Conn, address 
 	}
 
 	if err := nc.SetReadDeadline(deadline); err != nil {
-		return nil, redis.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "failed to set read deadline"}
+		return nil, pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "failed to set read deadline"}
 	}
 
 	return redis.Decode(nc)
