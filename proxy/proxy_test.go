@@ -80,6 +80,12 @@ func TestDbSelectCommand(t *testing.T) {
 	shutdown()
 }
 
+func TestLocalSocketPathFromUpstream(t *testing.T) {
+	assert.Equal(t, "prefix-with.host-colon.suffix", localSocketPathFromUpstream("with.host:colon", -1, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-withoutcolon.host.suffix", localSocketPathFromUpstream("withoutcolon.host", -1, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-with.host-db-1.suffix", localSocketPathFromUpstream("with.host:db", 1, "prefix-", ".suffix"))
+}
+
 func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {
 	args := make([]interface{}, len(cmd.args)+1)
 	args[0] = cmd.cmd
