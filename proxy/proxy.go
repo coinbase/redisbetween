@@ -202,8 +202,7 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 }
 
 func localSocketPathFromUpstream(upstream string, database int, prefix, suffix string) string {
-	hostPort := strings.Split(upstream, ":")
-	path := prefix + hostPort[0] + "-" + hostPort[1]
+	path := prefix + strings.Replace(upstream, ":", "-", -1)
 	if database > -1 {
 		path += "-" + strconv.Itoa(database)
 	}
