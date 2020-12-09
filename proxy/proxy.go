@@ -10,7 +10,6 @@ import (
 	"github.cbhq.net/engineering/redisbetween/listener"
 	"github.cbhq.net/engineering/redisbetween/redis"
 	"github.cbhq.net/engineering/redisbetween/util"
-	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/mediocregopher/radix/v3"
 	"io"
 	"net"
@@ -253,13 +252,13 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 				d := strconv.Itoa(p.database)
 				_, err = conn.Write([]byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n"))
 				if err != nil {
-					log.Error("failed to write select command", zap.Error(err))
+					logWith.Error("failed to write select command", zap.Error(err))
 					return conn, err
 				}
 				res := make([]byte, 5)
 				_, err = io.ReadFull(conn, res)
 				if err != nil || string(res) != "+OK\r\n" {
-					log.Error("failed to read select response", zap.Error(err), zap.String("response", string(res)))
+					logWith.Error("failed to read select response", zap.Error(err), zap.String("response", string(res)))
 				}
 				return conn, err
 			})
