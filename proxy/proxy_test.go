@@ -81,9 +81,9 @@ func TestDbSelectCommand(t *testing.T) {
 }
 
 func TestLocalSocketPathFromUpstream(t *testing.T) {
-	assert.Equal(t, "prefix-with-colon.suffix", localSocketPathFromUpstream("with:colon", -1, "prefix-", ".suffix"))
-	assert.Equal(t, "prefix-withoutcolon.suffix", localSocketPathFromUpstream("withoutcolon", -1, "prefix-", ".suffix"))
-	assert.Equal(t, "prefix-with-db-1.suffix", localSocketPathFromUpstream("with:db", 1, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-with.host-colon.suffix", localSocketPathFromUpstream("with.host:colon", -1, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-withoutcolon.host.suffix", localSocketPathFromUpstream("withoutcolon.host", -1, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-with.host-db-1.suffix", localSocketPathFromUpstream("with.host:db", 1, "prefix-", ".suffix"))
 }
 
 func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {
