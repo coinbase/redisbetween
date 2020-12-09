@@ -10,8 +10,11 @@ import (
 	"github.cbhq.net/engineering/redisbetween/listener"
 	"github.cbhq.net/engineering/redisbetween/redis"
 	"github.cbhq.net/engineering/redisbetween/util"
+	"github.com/CodisLabs/codis/pkg/utils/log"
 	"github.com/mediocregopher/radix/v3"
+	"io"
 	"net"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -231,27 +234,82 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	if err != nil {
 		return nil, err
 	}
-	m, err := redis.ConnectServer(
-		redis.Address(upstream),
+	opts := []redis.ServerOption{
 		redis.WithMinConnections(func(uint64) uint64 { return uint64(p.minPoolSize) }),
 		redis.WithMaxConnections(func(uint64) uint64 { return uint64(p.maxPoolSize) }),
-		// TODO hook up the pool monitor
-		//redis.WithConnectionPoolMonitor(func(*redis.PoolMonitor) *redis.PoolMonitor { return poolMonitor(sdWith) }),
-	)
+		redis.WithConnectionPoolMonitor(func(*redis.PoolMonitor) *redis.PoolMonitor { return poolMonitor(sdWith) }),
+	}
+
+	// if a db number has been specified, we need to issue a SELECT command before adding
+	// that connection to the pool, so its always pinned to the right db
+	if p.database > -1 {
+		co := redis.WithDialer(func(dialer redis.Dialer) redis.Dialer {
+			return redis.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+				dlr := &net.Dialer{Timeout: 30 * time.Second}
+				conn, err := dlr.DialContext(ctx, network, address)
+				if err != nil {
+					return conn, err
+				}
+				d := strconv.Itoa(p.database)
+				_, err = conn.Write([]byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n"))
+				if err != nil {
+					log.Error("failed to write select command", zap.Error(err))
+					return conn, err
+				}
+				res := make([]byte, 5)
+				_, err = io.ReadFull(conn, res)
+				if err != nil || string(res) != "+OK\r\n" {
+					log.Error("failed to read select response", zap.Error(err), zap.String("response", string(res)))
+				}
+				return conn, err
+			})
+		})
+		opts = append(opts, redis.WithConnectionOptions(func(cos ...redis.ConnectionOption) []redis.ConnectionOption {
+			return append(cos, co)
+		}))
+	}
+
+	s, err := redis.ConnectServer(redis.Address(upstream), opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, p.config, conn, local, id, m, kill, p.interceptMessage)
+		handlers.CommandConnection(log, p.statsd, p.config, conn, local, id, s, kill, p.interceptMessage)
 	}
 	shutdownHandler := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)
 		defer cancel()
-		_ = m.Disconnect(ctx)
+		_ = s.Disconnect(ctx)
 	}
 
-	// TODO send the SELECT command if p.database > -1
-
 	return listener.New(logWith, sdWith, p.config, p.config.Network, local, connectionHandler, shutdownHandler)
+}
+
+func poolMonitor(sd *statsd.Client) *redis.PoolMonitor {
+	checkedOut, checkedIn := util.StatsdBackgroundGauge(sd, "pool.checked_out_connections", []string{})
+	opened, closed := util.StatsdBackgroundGauge(sd, "pool.open_connections", []string{})
+
+	return &redis.PoolMonitor{
+		Event: func(e *redis.PoolEvent) {
+			snake := strings.ToLower(regexp.MustCompile("([a-z0-9])([A-Z])").ReplaceAllString(e.Type, "${1}_${2}"))
+			name := fmt.Sprintf("pool_event.%s", snake)
+			tags := []string{
+				fmt.Sprintf("address:%s", e.Address),
+				fmt.Sprintf("reason:%s", e.Reason),
+			}
+			switch e.Type {
+			case redis.ConnectionCreated:
+				opened(name, tags)
+			case redis.ConnectionClosed:
+				closed(name, tags)
+			case redis.GetSucceeded:
+				checkedOut(name, tags)
+			case redis.ConnectionReturned:
+				checkedIn(name, tags)
+			default:
+				_ = sd.Incr(name, tags, 1)
+			}
+		},
+	}
 }

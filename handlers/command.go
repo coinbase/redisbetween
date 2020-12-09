@@ -93,6 +93,7 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		if _, ok := UnsupportedCommands[incomingCmd]; ok {
 			em := redis.NewError([]byte(fmt.Sprintf("redisbetween: %v is unsupported", incomingCmd)))
 			err = WriteWireMessage(c.ctx, l, em, c.conn, c.address, c.id, 0, c.conn.Close)
+			c.log.Debug("unsupported command", zap.String("command", incomingCmd))
 			return l, err
 		}
 

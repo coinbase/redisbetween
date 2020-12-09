@@ -20,7 +20,7 @@ import (
 // a standalone redis on port 7006. see docker-compose.yml
 
 func TestProxy(t *testing.T) {
-	sd := setupProxy(t, "7006", false)
+	sd := setupProxy(t, "7006", -1, false)
 
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
@@ -42,10 +42,8 @@ type command struct {
 }
 
 func TestIntegrationCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7000", true)
-
+	shutdownProxy := setupProxy(t, "7000", -1, true)
 	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-127.0.0.1-7000.sock")
-
 	var i int
 	var wg sync.WaitGroup
 	for {
@@ -70,8 +68,16 @@ func TestIntegrationCommands(t *testing.T) {
 		}
 	}
 	wg.Wait()
-
 	shutdownProxy()
+}
+
+func TestDbSelectCommand(t *testing.T) {
+	shutdown := setupProxy(t, "7006", 3, false)
+	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
+	res := client.Do(context.Background(), "CLIENT", "LIST")
+	assert.NoError(t, res.Err())
+	assert.Contains(t, res.String(), "db=3")
+	shutdown()
 }
 
 func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {
@@ -84,7 +90,7 @@ func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {
 	assert.Equal(t, cmd.res, res.String())
 }
 
-func setupProxy(t *testing.T, upstreamPort string, cluster bool) func() {
+func setupProxy(t *testing.T, upstreamPort string, db int, cluster bool) func() {
 	t.Helper()
 
 	uri := "127.0.0.1:" + upstreamPort
@@ -102,7 +108,7 @@ func setupProxy(t *testing.T, upstreamPort string, cluster bool) func() {
 		Unlink:            true,
 	}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, -1, cluster, 1, 1)
+	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, cluster, 1, 1)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run()
