@@ -199,7 +199,7 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 				p.log.Error("failed to parse MOVED error", zap.String("original command", originalCmd), zap.String("original message", msg))
 				return
 			}
-			p.ensureListenerForUpstream(parts[2], originalCmd)
+			p.ensureListenerForUpstream(parts[2], originalCmd+" "+parts[0])
 		}
 	}
 }
