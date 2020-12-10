@@ -6,7 +6,6 @@ import (
 	"github.cbhq.net/engineering/memcachedbetween/pool"
 	"github.cbhq.net/engineering/redisbetween/config"
 	"github.cbhq.net/engineering/redisbetween/redis"
-	"github.com/CodisLabs/codis/pkg/utils/log"
 	"io"
 	"net"
 	"runtime/debug"
@@ -128,7 +127,7 @@ func (c *connection) roundTrip(wm *redis.Message) (*redis.Message, *zap.Logger, 
 	}()
 
 	l = c.log.With(zap.Uint64("upstream_id", conn.ID()))
-	log.Debug("Connection checked out")
+	l.Debug("Connection checked out")
 
 	if err = WriteWireMessage(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.cfg.WriteTimeout, conn.Close); err != nil {
 		return nil, l, err
