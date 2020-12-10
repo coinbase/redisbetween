@@ -61,7 +61,6 @@ func run(log *zap.Logger, cfg *config.Config) error {
 		p := p
 		wg.Add(1)
 		go func() {
-			fmt.Println("running", p)
 			err := p.Run()
 			if err != nil {
 				log.Error("Error", zap.Error(err))
@@ -73,12 +72,11 @@ func run(log *zap.Logger, cfg *config.Config) error {
 	shutdown := func() {
 		for _, p := range proxies {
 			p.Shutdown()
-			fmt.Println("bye", p)
 		}
 	}
 	kill := func() {
 		for _, p := range proxies {
-			fmt.Println("kill", p)
+			p.Kill()
 		}
 	}
 	shutdownOnSignal(log, shutdown, kill)
