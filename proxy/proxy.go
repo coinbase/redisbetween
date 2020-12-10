@@ -172,7 +172,7 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 			return
 		}
 		for _, slot := range slots {
-			p.ensureListenerForUpstream(slot.Addr)
+			p.ensureListenerForUpstream(slot.Addr, originalCmd)
 		}
 		return
 	}
@@ -185,7 +185,7 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 				rt := strings.IndexByte(line, '@')
 				if lt > 0 && rt > 0 {
 					hostPort := line[lt+1 : rt]
-					p.ensureListenerForUpstream(hostPort)
+					p.ensureListenerForUpstream(hostPort, originalCmd)
 				}
 			}
 		}
@@ -199,7 +199,7 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 				p.log.Error("failed to parse MOVED error", zap.String("original command", originalCmd), zap.String("original message", msg))
 				return
 			}
-			p.ensureListenerForUpstream(parts[2])
+			p.ensureListenerForUpstream(parts[2], originalCmd+" "+parts[0])
 		}
 	}
 }
@@ -212,14 +212,14 @@ func localSocketPathFromUpstream(upstream string, database int, prefix, suffix s
 	return path + suffix
 }
 
-func (p *Proxy) ensureListenerForUpstream(upstream string) {
-	p.log.Info("ensuring we have a listener for", zap.String("upstream", upstream))
+func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
+	p.log.Info("ensuring we have a listener for", zap.String("upstream", upstream), zap.String("command", originalCmd))
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
 	_, ok := p.listeners[upstream]
 	if !ok {
 		local := localSocketPathFromUpstream(upstream, p.database, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
-		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local))
+		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local), zap.String("command", originalCmd))
 		l, err := p.createListener(local, upstream)
 		if err != nil {
 			p.log.Error("unable to create listener", zap.Error(err))
