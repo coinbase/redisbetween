@@ -4,7 +4,6 @@ go 1.13
 
 require (
 	github.cbhq.net/engineering/memcachedbetween v0.0.0-20201209165622-903d4500e56f
-	github.com/CodisLabs/codis v0.0.0-20181104082235-de1ad026e329
 	github.com/DataDog/datadog-go v4.2.0+incompatible
 	github.com/coinbase/mongobetween v0.0.9
 	github.com/go-redis/redis/v8 v8.4.2

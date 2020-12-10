@@ -55,7 +55,6 @@ module RedisPatch
       u.host = nil
       u.port = nil
       u.scheme = 'unix'
-      puts "new url ->", u.to_s
       options[:url] = u.to_s
     end
     super(options)

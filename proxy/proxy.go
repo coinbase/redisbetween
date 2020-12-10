@@ -162,11 +162,13 @@ func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
 	if originalCmd == "CLUSTER SLOTS" {
 		b, err := redis.EncodeToBytes(m)
 		if err != nil {
+			p.log.Error("failed to encode cluster slots message", zap.Error(err))
 			return
 		}
 		slots := radix.ClusterTopo{}
 		err = slots.UnmarshalRESP(bufio.NewReader(bytes.NewReader(b)))
 		if err != nil {
+			p.log.Error("failed to unmarshal cluster slots message", zap.Error(err))
 			return
 		}
 		for _, slot := range slots {
