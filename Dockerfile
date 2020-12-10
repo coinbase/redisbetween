@@ -1,5 +1,6 @@
 # build
 FROM 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/golang-1.14:production
+ENV GOPROXY=gomodules.cbhq.net
 WORKDIR /build
 COPY . /build
 RUN mkdir bin
