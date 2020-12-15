@@ -129,5 +129,5 @@ Each URI can specify the following settings as GET params:
 - `maxpoolsize` sets the max connection pool size for this host. Defaults to 10
 - `cluster` must be set to `true` for cluster upstreams. Defaults to `false`
 - `label` optionally tags events and metrics for proxy activity on this host or cluster. Defaults to `""` (disabled)
-- `readtimeout` timeout for reads to this upstream. Defaults to 3s
-- `writetimeout` timeout for writes to this upstream. Defaults to 3s
+- `readtimeout` timeout for reads to this upstream. Defaults to 5s
+- `writetimeout` timeout for writes to this upstream. Defaults to 5s
