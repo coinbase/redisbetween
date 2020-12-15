@@ -75,6 +75,12 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
+
+	// todo remove these flags in a follow up, after all envs have updated to the new url-param style of timeout config
+	var obsoleteArg string
+	flag.StringVar(&obsoleteArg, "readtimeout", "unused", "unused. for backwards compatibility only")
+	flag.StringVar(&obsoleteArg, "writetimeout", "unused", "unused. for backwards compatibility only")
+
 	flag.Parse()
 
 	level := zap.InfoLevel
