@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.cbhq.net/engineering/memcachedbetween/pool"
-	"github.cbhq.net/engineering/redisbetween/config"
 	"github.cbhq.net/engineering/redisbetween/redis"
 	"io"
 	"net"
@@ -17,21 +16,21 @@ import (
 )
 
 type connection struct {
-	log    *zap.Logger
-	statsd *statsd.Client
-	cfg    *config.Config
-
-	ctx         context.Context
-	conn        net.Conn
-	address     string
-	id          uint64
-	server      *pool.Server
-	kill        chan interface{}
-	interceptor MessageInterceptor
+	log          *zap.Logger
+	statsd       *statsd.Client
+	ctx          context.Context
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	conn         net.Conn
+	address      string
+	id           uint64
+	server       *pool.Server
+	kill         chan interface{}
+	interceptor  MessageInterceptor
 }
 type MessageInterceptor func(incomingCmd string, m *redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, cfg *config.Config, conn net.Conn, address string, id uint64, server *pool.Server, kill chan interface{}, interceptor MessageInterceptor) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, readTimeout, writeTimeout time.Duration, id uint64, server *pool.Server, kill chan interface{}, interceptor MessageInterceptor) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -41,7 +40,6 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, cfg *config.Config, c
 	c := connection{
 		log:         log,
 		statsd:      sd,
-		cfg:         cfg,
 		ctx:         context.Background(),
 		conn:        conn,
 		address:     address,
@@ -129,11 +127,11 @@ func (c *connection) roundTrip(wm *redis.Message) (*redis.Message, *zap.Logger, 
 	l = c.log.With(zap.Uint64("upstream_id", conn.ID()))
 	l.Debug("Connection checked out")
 
-	if err = WriteWireMessage(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.cfg.WriteTimeout, conn.Close); err != nil {
+	if err = WriteWireMessage(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.writeTimeout, conn.Close); err != nil {
 		return nil, l, err
 	}
 
-	res, err := ReadWireMessage(c.ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), c.cfg.ReadTimeout, conn.Close)
+	res, err := ReadWireMessage(c.ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), c.readTimeout, conn.Close)
 	return res, l, err
 }
 

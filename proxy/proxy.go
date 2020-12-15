@@ -38,6 +38,8 @@ type Proxy struct {
 	localConfigHost    string
 	maxPoolSize        int
 	minPoolSize        int
+	readTimeout        time.Duration
+	writeTimeout       time.Duration
 	cluster            bool
 	database           int
 
@@ -49,7 +51,7 @@ type Proxy struct {
 	listenerWg   sync.WaitGroup
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, cluster bool, minPoolSize, maxPoolSize int) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, cluster bool, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -68,6 +70,8 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		localConfigHost:    localSocketPathFromUpstream(upstreamHost, database, config.LocalSocketPrefix, config.LocalSocketSuffix),
 		minPoolSize:        minPoolSize,
 		maxPoolSize:        maxPoolSize,
+		readTimeout:        readTimeout,
+		writeTimeout:       writeTimeout,
 		cluster:            cluster,
 		database:           database,
 
@@ -276,7 +280,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, p.config, conn, local, id, s, kill, p.interceptMessage)
+		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, s, kill, p.interceptMessage)
 	}
 	shutdownHandler := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)
