@@ -49,13 +49,21 @@ socket for it before relaying the response to the client.
 module RedisPatch
   def initialize(options = {})
     if options[:convert_to_redisbetween_socket]
-      u = URI(options[:url])
-      path = u.path.empty? ? nil : u.path.delete_prefix('/')
-      u.path = ['/var/tmp/redisbetween', u.host, u.port, path].compact.join('-') + '.sock'
-      u.host = nil
-      u.port = nil
-      u.scheme = 'unix'
-      options[:url] = u.to_s
+      if options[:url]
+        u = URI(options[:url])
+        if u.scheme != 'unix'
+          path = u.path.empty? ? nil : u.path.delete_prefix('/')
+          u.path = ['/var/tmp/redisbetween', u.host, u.port, path].compact.join('-') + '.sock'
+          u.host = nil
+          u.port = nil
+          u.scheme = 'unix'
+          options[:url] = u.to_s
+        end
+      elsif options[:host] && options[:port] && options[:scheme] != 'unix'
+        path = ['/var/tmp/redisbetween', options[:host], options[:port]].compact.join('-') + '.sock'
+        options[:url] = "unix:#{path}"
+        [:port, :host, :scheme].each { |k| options[k] = nil }
+      end
     end
     super(options)
   end
@@ -109,14 +117,10 @@ Usage: bin/redisbetween [OPTIONS] uri1 [uri2] ...
     	one of: tcp, tcp4, tcp6, unix or unixpacket (default "unix")
   -pretty
     	pretty print logging
-  -readtimeout duration
-    	read timeout (default 1s)
   -statsd string
     	statsd address (default "localhost:8125")
   -unlink
     	unlink existing unix sockets before listening
-  -writetimeout duration
-    	write timeout (default 1s)
 ```
 
 Each URI can specify the following settings as GET params:
@@ -125,7 +129,5 @@ Each URI can specify the following settings as GET params:
 - `maxpoolsize` sets the max connection pool size for this host. Defaults to 10
 - `cluster` must be set to `true` for cluster upstreams. Defaults to `false`
 - `label` optionally tags events and metrics for proxy activity on this host or cluster. Defaults to `""` (disabled)
-
-### Statsd
-
-TBD
+- `readtimeout` timeout for reads to this upstream. Defaults to 5s
+- `writetimeout` timeout for writes to this upstream. Defaults to 5s
