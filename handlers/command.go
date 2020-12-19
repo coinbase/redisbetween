@@ -84,7 +84,7 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 	l := c.log
 
 	var wm []*redis.Message
-	if wm, err = ReadWireMessages(c.ctx, l, c.conn, c.address, c.id, 1*time.Second, 1, true, c.conn.Close); err != nil {
+	if wm, err = ReadWireMessages(c.ctx, l, c.conn, c.address, c.id, 0, 1, true, c.conn.Close); err != nil {
 		return l, err
 	}
 
