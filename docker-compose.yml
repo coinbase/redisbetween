@@ -13,5 +13,5 @@ services:
 
   redis-monitor:
     image: 'redis'
-    command: 'redis-cli -p 7000 -h redis-cluster monitor'
+    command: 'redis-cli -p 7006 -h redis-cluster monitor'
     restart: always

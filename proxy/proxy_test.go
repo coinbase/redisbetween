@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"github.cbhq.net/engineering/redisbetween/config"
+	"github.cbhq.net/engineering/redisbetween/handlers"
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -71,6 +72,39 @@ func TestIntegrationCommands(t *testing.T) {
 	shutdownProxy()
 }
 
+func TestPipelinedCommands(t *testing.T) {
+	shutdownProxy := setupProxy(t, "7006", 3, true)
+	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
+	var i int
+	var wg sync.WaitGroup
+	for {
+		go func(index int, t *testing.T) {
+			var j int
+			ind := strconv.Itoa(index)
+			commands := []command{{cmd: "get", args: []string{string(handlers.PipelineSignalStartKey)}, res: "get 🔜: redis: nil"}}
+			for {
+				j++
+				if j == 20 {
+					break
+				}
+				s := ind + strconv.Itoa(j)
+				commands = append(commands, command{cmd: "set", args: []string{s, "hi"}, res: "set " + s + " hi: OK"})
+				commands = append(commands, command{cmd: "get", args: []string{s}, res: "get " + s + ": hi"})
+			}
+			commands = append(commands, command{cmd: "get", args: []string{string(handlers.PipelineSignalEndKey)}, res: "get 🔚: redis: nil"})
+			assertResponsePipelined(t, commands, client)
+			wg.Done()
+		}(i, t)
+		wg.Add(1)
+		i++
+		if i == 10 {
+			break
+		}
+	}
+	wg.Wait()
+	shutdownProxy()
+}
+
 func TestDbSelectCommand(t *testing.T) {
 	shutdown := setupProxy(t, "7006", 3, false)
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
@@ -94,6 +128,27 @@ func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {
 	}
 	res := c.Do(context.Background(), args...)
 	assert.Equal(t, cmd.res, res.String())
+}
+
+func assertResponsePipelined(t *testing.T, cmds []command, c *redis.Client) {
+	p := c.Pipeline()
+	actuals := make([]*redis.Cmd, len(cmds))
+	expected := make([]string, len(cmds))
+	for i, cmd := range cmds {
+		args := make([]interface{}, len(cmd.args)+1)
+		args[0] = cmd.cmd
+		for i, a := range cmd.args {
+			args[i+1] = a
+		}
+		actuals[i] = p.Do(context.Background(), args...)
+		expected[i] = cmd.res
+	}
+	_, _ = p.Exec(context.Background())
+	actualStrings := make([]string, len(actuals))
+	for i, a := range actuals {
+		actualStrings[i] = a.String()
+	}
+	assert.Equal(t, expected, actualStrings)
 }
 
 func setupProxy(t *testing.T, upstreamPort string, db int, cluster bool) func() {
@@ -130,7 +185,7 @@ func setupProxy(t *testing.T, upstreamPort string, db int, cluster bool) func() 
 
 func setupStandaloneClient(t *testing.T, address string) *redis.Client {
 	t.Helper()
-	client := redis.NewClient(&redis.Options{Network: "unix", Addr: address})
+	client := redis.NewClient(&redis.Options{Network: "unix", Addr: address, MaxRetries: 1})
 	res := client.Do(context.Background(), "ping")
 	if res.Err() != nil {
 		_ = client.Close()
@@ -156,6 +211,7 @@ func setupClusterClient(t *testing.T, address string) *redis.ClusterClient {
 			}
 			return net.Dial(network, addr)
 		},
+		MaxRetries: 1,
 	}
 	client := redis.NewClusterClient(opt)
 	res := client.Do(context.Background(), "ping")

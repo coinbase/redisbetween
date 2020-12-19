@@ -26,8 +26,6 @@ func TestParseFlags(t *testing.T) {
 		"-pretty",
 		"-statsd", "statsd:1234",
 		"-unlink",
-		"-readtimeout", "1s",
-		"-writetimeout", "1s",
 		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
 		"redis://localhost:7002?minpoolsize=10&label=cluster2&cluster=true&readtimeout=3s&writetimeout=6s",
 	}

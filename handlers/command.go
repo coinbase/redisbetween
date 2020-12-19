@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.cbhq.net/engineering/memcachedbetween/pool"
@@ -28,7 +29,10 @@ type connection struct {
 	kill         chan interface{}
 	interceptor  MessageInterceptor
 }
-type MessageInterceptor func(incomingCmd string, m *redis.Message)
+type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
+
+var PipelineSignalStartKey = []byte("🔜")
+var PipelineSignalEndKey = []byte("🔚")
 
 func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, readTimeout, writeTimeout time.Duration, id uint64, server *pool.Server, kill chan interface{}, interceptor MessageInterceptor) {
 	defer func() {
@@ -79,40 +83,80 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 
 	l := c.log
 
-	var wm *redis.Message
-	if wm, err = ReadWireMessage(c.ctx, l, c.conn, c.address, c.id, 0, c.conn.Close); err != nil {
+	var wm []*redis.Message
+	if wm, err = ReadWireMessages(c.ctx, l, c.conn, c.address, c.id, 1*time.Second, 1, true, c.conn.Close); err != nil {
 		return l, err
 	}
 
-	var incomingCmd string
-	if wm.IsArray() {
-		incomingCmd = strings.ToUpper(string(wm.Array[0].Value))
+	// the only time we have multiple messages is when they are pipelined, and
+	// therefore have the signal messages prepended/appended, so do not bother
+	// sending those to the upstream. we will make dummy responses later and
+	// send them to the downstream client.
+	var pipeline bool
+	if len(wm) > 2 {
+		pipeline = true
+		wm = wm[1 : len(wm)-1]
+	}
 
-		if _, ok := UnsupportedCommands[incomingCmd]; ok {
-			em := redis.NewError([]byte(fmt.Sprintf("redisbetween: %v is unsupported", incomingCmd)))
-			err = WriteWireMessage(c.ctx, l, em, c.conn, c.address, c.id, 0, c.conn.Close)
-			c.log.Debug("unsupported command", zap.String("command", incomingCmd))
-			return l, err
-		}
-
-		if incomingCmd == "CLUSTER" && len(wm.Array) > 1 {
-			// we only need to parse the next element if this is a CLUSTER command, for the
-			// CLUSTER SLOTS and CLUSTER NODES cases
-			incomingCmd += " " + strings.ToUpper(string(wm.Array[1].Value))
-		}
+	incomingCmds, err := c.validateCommands(wm)
+	if err != nil {
+		mm := []*redis.Message{redis.NewError([]byte(fmt.Sprintf("redisbetween: %v", err.Error())))}
+		c.log.Debug("invalid commands", zap.Strings("commands", incomingCmds), zap.Error(err))
+		err = WriteWireMessages(c.ctx, l, mm, c.conn, c.address, c.id, 0, false, c.conn.Close)
+		return l, err
 	}
 
 	if wm, l, err = c.roundTrip(wm); err != nil {
 		return l, err
 	}
 
-	c.interceptor(incomingCmd, wm)
+	c.interceptor(incomingCmds, wm)
 
-	err = WriteWireMessage(c.ctx, l, wm, c.conn, c.address, c.id, 0, c.conn.Close)
+	err = WriteWireMessages(c.ctx, l, wm, c.conn, c.address, c.id, 0, pipeline, c.conn.Close)
 	return l, err
 }
 
-func (c *connection) roundTrip(wm *redis.Message) (*redis.Message, *zap.Logger, error) {
+func (c *connection) validateCommands(wm []*redis.Message) ([]string, error) {
+	var transactionOpen bool
+	incomingCmds := make([]string, len(wm))
+
+	for i, m := range wm {
+		var incomingCmd string
+		if m.IsArray() {
+			incomingCmd = strings.ToUpper(string(m.Array[0].Value))
+
+			if t, ok := TransactionCommands[incomingCmd]; ok {
+				switch t {
+				case TransactionOpen:
+					transactionOpen = true
+				case TransactionClose:
+					transactionOpen = false
+				}
+			}
+
+			if _, ok := UnsupportedCommands[incomingCmd]; ok {
+				return nil, fmt.Errorf("%v is unsupported", incomingCmd)
+			}
+
+			if incomingCmd == "CLUSTER" && len(m.Array) > 1 {
+				// we only need to parse the next element if this is a CLUSTER command, for the
+				// CLUSTER SLOTS and CLUSTER NODES cases
+				incomingCmd += " " + strings.ToUpper(string(m.Array[1].Value))
+			}
+
+			incomingCmds[i] = incomingCmd
+		}
+	}
+
+	if transactionOpen {
+		return incomingCmds, fmt.Errorf("cannot leave an open transaction")
+	}
+
+	return incomingCmds, nil
+
+}
+
+func (c *connection) roundTrip(wm []*redis.Message) ([]*redis.Message, *zap.Logger, error) {
 	l := c.log
 	var err error
 
@@ -127,11 +171,12 @@ func (c *connection) roundTrip(wm *redis.Message) (*redis.Message, *zap.Logger, 
 	l = c.log.With(zap.Uint64("upstream_id", conn.ID()))
 	l.Debug("Connection checked out")
 
-	if err = WriteWireMessage(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.writeTimeout, conn.Close); err != nil {
+	if err = WriteWireMessages(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.writeTimeout, false, conn.Close); err != nil {
 		return nil, l, err
 	}
 
-	res, err := ReadWireMessage(c.ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), c.readTimeout, conn.Close)
+	res, err := ReadWireMessages(c.ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), c.readTimeout, len(wm), false, conn.Close)
+
 	return res, l, err
 }
 
@@ -155,7 +200,7 @@ func (c *connection) checkoutConnection() (conn *pool.Connection, err error) {
 	return conn, nil
 }
 
-func WriteWireMessage(ctx context.Context, log *zap.Logger, wm *redis.Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, close func() error) error {
+func WriteWireMessages(ctx context.Context, log *zap.Logger, wm []*redis.Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, wrapPipeline bool, close func() error) error {
 	var err error
 	select {
 	case <-ctx.Done():
@@ -176,17 +221,25 @@ func WriteWireMessage(ctx context.Context, log *zap.Logger, wm *redis.Message, n
 		return pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "failed to set write deadline"}
 	}
 
-	err = redis.Encode(nc, wm)
-
-	if err != nil {
-		_ = close()
-		return pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "unable to write wire message to network"}
+	if wrapPipeline { // make dummy messages to pad out the pipeline signal responses
+		s := redis.NewBulkBytes(nil) // redis nil response ($-1\r\n)
+		e := redis.NewBulkBytes(nil) // redis nil response ($-1\r\n)
+		wm = append(append([]*redis.Message{s}, wm...), e)
 	}
+
+	for _, m := range wm {
+		err = redis.Encode(nc, m)
+		if err != nil {
+			_ = close()
+			return pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "unable to write wire message to network"}
+		}
+	}
+
 	log.Debug("Write", zap.String("address", address))
 	return nil
 }
 
-func ReadWireMessage(ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, close func() error) (*redis.Message, error) {
+func ReadWireMessages(ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*redis.Message, error) {
 	select {
 	case <-ctx.Done():
 		// We closeConnection the connection because we don't know if there is an unread message on the wire.
@@ -208,5 +261,39 @@ func ReadWireMessage(ctx context.Context, log *zap.Logger, nc net.Conn, address 
 		return nil, pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "failed to set read deadline"}
 	}
 
-	return redis.Decode(nc)
+	d := redis.NewDecoder(nc)
+	var pipelineOpen bool
+	wm := make([]*redis.Message, 0)
+	for i := 0; i < readMin || (pipelineOpen && checkPipelineSignals); i++ {
+		m, err := d.Decode()
+		if err != nil {
+			return nil, err
+		}
+		wm = appendMessage(wm, m)
+		if checkPipelineSignals && isSignalMessage(m, PipelineSignalStartKey) {
+			pipelineOpen = true
+		} else if checkPipelineSignals && isSignalMessage(m, PipelineSignalEndKey) {
+			pipelineOpen = false
+		}
+	}
+	return wm, nil
+}
+
+// any message of length 2 (GET, for example) that passes the signal as its only argument
+func isSignalMessage(m *redis.Message, signal []byte) bool {
+	return len(m.Array) == 2 && bytes.Equal(signal, m.Array[1].Value)
+}
+
+// slightly more optimized than `append` for building message slices
+func appendMessage(slice []*redis.Message, data ...*redis.Message) []*redis.Message {
+	m := len(slice)
+	n := m + len(data)
+	if n > cap(slice) { // if necessary, reallocate. allocate double what's needed
+		newSlice := make([]*redis.Message, (n+1)*2)
+		copy(newSlice, slice)
+		slice = newSlice
+	}
+	slice = slice[0:n]
+	copy(slice[m:n], data)
+	return slice
 }

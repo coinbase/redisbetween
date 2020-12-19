@@ -1,6 +1,9 @@
 package redis
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type MsgType byte
 
@@ -54,6 +57,12 @@ func (r *Message) IsBulkBytes() bool {
 
 func (r *Message) IsArray() bool {
 	return r.Type == TypeArray
+}
+
+// convenience function for testing only
+func (r *Message) String() string {
+	bytes, _ := EncodeToBytes(r)
+	return strings.ReplaceAll(string(bytes), "\r\n", " \\r\\n ")
 }
 
 func NewString(value []byte) *Message {
