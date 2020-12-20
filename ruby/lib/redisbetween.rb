@@ -5,6 +5,9 @@ require 'uri'
 module Redisbetween
   class Error < StandardError; end
 
+  PIPELINE_START_SIGNAL = '🔜'
+  PIPELINE_END_SIGNAL = '🔚'
+
   module ClientPatch
     attr_reader :redisbetween_enabled
 
@@ -33,8 +36,8 @@ module Redisbetween
 
     def call_pipelined(pipeline)
       if @redisbetween_pipeline_signals_enabled
-        pipeline.futures.unshift(Redis::Future.new([:get, "🔜"], nil, nil))
-        pipeline.futures << Redis::Future.new([:get, "🔚"], nil, nil)
+        pipeline.futures.unshift(Redis::Future.new([:get, PIPELINE_START_SIGNAL], nil, nil))
+        pipeline.futures << Redis::Future.new([:get, PIPELINE_END_SIGNAL], nil, nil)
       end
       super
     end

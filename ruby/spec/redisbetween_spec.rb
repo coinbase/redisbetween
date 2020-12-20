@@ -90,6 +90,4 @@ RSpec.describe Redisbetween do
       expect { client.multi }.to raise_error(Redisbetween::Error)
     end
   end
-
-  # also check cluster
 end
