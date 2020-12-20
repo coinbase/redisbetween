@@ -10,13 +10,12 @@ services:
     ports:
       - '7000-7050:7000-7050'
 
-  redisbetween-go:
+  go:
     build: ..
     network_mode: host
-    image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/engineering/golang-1.14:production
+    image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/golang-1.14:production
     volumes:
       - $PWD:/project
-      - /usr/bin/buildkite-agent:/usr/bin/buildkite-agent
     working_dir: /project
     depends_on:
       - redis-cluster
@@ -24,13 +23,12 @@ services:
       GONOSUMDB: github.cbhq.net
       GOPROXY: https://gomodules.cbhq.net/
 
-  redisbetween-ruby:
+  ruby:
     build: ..
     network_mode: host
-    image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/engineering/ruby-2.7:production
+    image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/ruby-2.7:production
     volumes:
       - $PWD:/project
-      - /usr/bin/buildkite-agent:/usr/bin/buildkite-agent
     working_dir: /project
     depends_on:
       - redis-cluster
