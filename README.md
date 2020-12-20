@@ -47,40 +47,9 @@ be the only socket created. However, redisbetween will inspect responses to `CLU
 cluster members that it hasn't yet seen. When it sees a new cluster member, it allocates a new connection pool and unix
 socket for it before relaying the response to the client.
 
-**Important** - Redis clients must be patched to translate URLs to local sockets according to the naming scheme
-*described above. For example, here's a patch to the ruby redis client:
+### Redisbetween gem
 
-```ruby
-module RedisPatch
-  def initialize(options = {})
-    if options[:convert_to_redisbetween_socket]
-      if options[:url]
-        u = URI(options[:url])
-        if u.scheme != 'unix'
-          path = u.path.empty? ? nil : u.path.delete_prefix('/')
-          u.path = ['/var/tmp/redisbetween', u.host, u.port, path].compact.join('-') + '.sock'
-          u.host = nil
-          u.port = nil
-          u.scheme = 'unix'
-          options[:url] = u.to_s
-        end
-      elsif options[:host] && options[:port] && options[:scheme] != 'unix'
-        path = ['/var/tmp/redisbetween', options[:host], options[:port]].compact.join('-') + '.sock'
-        options[:url] = "unix:#{path}"
-        [:port, :host, :scheme].each { |k| options[k] = nil }
-      end
-    end
-    super(options)
-  end
-end
-
-Redis::Client.prepend(RedisPatch)
-
-cluster = Redis.new(cluster: [{ host: 'some.redis.cluster.com' }], convert_to_redisbetween_socket: true)
-standalone = Redis.new(url: 'redis://some.redis.server.com/3', convert_to_redisbetween_socket: true)
-puts cluster.cluster("slots")
-puts standalone.get("hi")
-```
+This repo contains a gem that todo ...
 
 Here's an example of a similar patch to the go-redis client. Note that this one does not handle db number selection, as
 that is not supported by redis cluster anyway.

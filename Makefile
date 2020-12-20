@@ -11,3 +11,6 @@ test:
 
 lint:
 	GOGC=75 golangci-lint run --timeout 10m --concurrency 32 -v -E golint ./...
+
+ruby-test:
+	cd ruby; rake
