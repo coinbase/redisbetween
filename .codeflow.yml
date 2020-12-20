@@ -2,3 +2,8 @@
 secure:
   required_reviews: 1
   requires_mfa: true
+build:
+  engines:
+    - BaldurGem:
+        name: gem
+        path: ./Dockerfile-gem
