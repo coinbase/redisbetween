@@ -27,7 +27,7 @@ steps:
       queue: docker
   - label: ruby-tests
     commands:
-      - make ruby-test
+      - make ruby-setup ruby-test
     plugins:
       - file:///buildkite/plugins/docker-compose:
           run: redisbetween-ruby

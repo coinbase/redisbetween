@@ -14,3 +14,6 @@ lint:
 
 ruby-test:
 	cd ruby; rake
+
+ruby-setup:
+	cd ruby; bin/setup
