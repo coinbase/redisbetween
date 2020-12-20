@@ -25,7 +25,7 @@ services:
 
   ruby:
     network_mode: host
-    image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/ruby-2.7:production
+    image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/ruby-2.6:production
     volumes:
       - $PWD:/project
     working_dir: /project
