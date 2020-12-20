@@ -24,7 +24,6 @@ services:
       GOPROXY: https://gomodules.cbhq.net/
 
   ruby:
-    build: ..
     network_mode: host
     image: 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/ruby-2.7:production
     volumes:
