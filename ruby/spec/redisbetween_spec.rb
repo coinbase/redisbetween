@@ -79,6 +79,29 @@ RSpec.describe Redisbetween do
           )
         end
 
+        it 'should correctly process transactions with no cross slot keys' do
+          stream = StringIO.new
+          client = Redis.new(options.merge({ convert_to_redisbetween_socket: true, logger: test_logger(stream) }))
+          res = client.multi do
+            client.set("{1}hi", 1)
+            client.get("{1}hi")
+            client.set("{1}yes", "maybe")
+            client.get("{1}yes")
+          end
+          expect(res).to eq(%w[OK 1 OK maybe])
+          expect(stream.string).to include(<<~LOG
+            command=GET args="🔜"
+            command=MULTI
+            command=SET args="hi" "1"
+            command=GET args="hi"
+            command=SET args="yes" "maybe"
+            command=GET args="yes"
+            command=EXEC
+            command=GET args="🔚"
+          LOG
+          )
+        end
+
         it 'should not prepend or append the signal messages to any pipelines when not enabled' do
           stream = StringIO.new
           client = Redis.new(options.merge({ logger: test_logger(stream) }))
