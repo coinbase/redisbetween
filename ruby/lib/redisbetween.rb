@@ -8,12 +8,24 @@ module Redisbetween
   PIPELINE_START_SIGNAL = '🔜'
   PIPELINE_END_SIGNAL = '🔚'
 
-  module ClientPatch
+  module Common
     attr_reader :redisbetween_enabled
 
+    def redisbetween_options(options)
+      @redisbetween_enabled = !!options[:convert_to_redisbetween_socket]
+      @handle_unsupported_redisbetween_command = options[:handle_unsupported_redisbetween_commands]
+      if @redisbetween_enabled
+        @handle_unsupported_redisbetween_command ||= ->(cmd) { puts "redisbetween: unsupported #{cmd}" }
+      end
+    end
+  end
+
+  module ClientPatch
+    include Common
+
     def initialize(options = {})
-      if options[:convert_to_redisbetween_socket]
-        @redisbetween_enabled = true
+      redisbetween_options(options)
+      if redisbetween_enabled
         if options[:url]
           u = URI(options[:url])
           if u.scheme != 'unix'
@@ -34,29 +46,12 @@ module Redisbetween
     end
 
     def call_pipeline(pipeline)
-      if @redisbetween_enabled
+      if redisbetween_enabled
         pipeline.futures.unshift(Redis::Future.new([:get, PIPELINE_START_SIGNAL], nil, nil))
         pipeline.futures << Redis::Future.new([:get, PIPELINE_END_SIGNAL], nil, nil)
       end
 
-      @redisbetween_enabled ? super[1..-2] : super
-    end
-  end
-
-  module RedisPatch
-    attr_reader :redisbetween_enabled
-
-    def initialize(options = {})
-      @redisbetween_enabled = !!options[:convert_to_redisbetween_socket]
-      @disallow_unsupported_redisbetween_commands = !!options[:disallow_unsupported_redisbetween_commands] || @redisbetween_enabled
-      super(options)
-    end
-
-    def multi(*args, &block)
-      if @disallow_unsupported_redisbetween_commands && !block_given?
-        raise Error.new("redisbetween requires that `multi` always be called with a block")
-      end
-      super
+      redisbetween_enabled ? super[1..-2] : super
     end
 
     UNSUPPORTED_COMMANDS = [
@@ -76,13 +71,25 @@ module Redisbetween
       :xreadgroup,
     ].to_set.freeze
 
-    UNSUPPORTED_COMMANDS.each do |command|
-      define_method(command) do |*args|
-        if @disallow_unsupported_redisbetween_commands
-          raise Error.new("unsupported command #{command}")
-        end
-        super *args
+    def call(command)
+      if UNSUPPORTED_COMMANDS.member?(command&.first)
+        @handle_unsupported_redisbetween_command&.call(command.first.to_s)
       end
+      super
+    end
+  end
+
+  module RedisPatch
+    include Common
+
+    def initialize(options = {})
+      redisbetween_options(options)
+      super(options)
+    end
+
+    def multi(*args, &block)
+      @handle_unsupported_redisbetween_command&.call("multi without a block")
+      super
     end
   end
 

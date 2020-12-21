@@ -1,7 +1,7 @@
 RSpec.describe Redisbetween do
-  def test_logger(stream)
+  def test_logger(stream, level = Logger::DEBUG)
     logger = Logger.new(stream)
-    logger.level = Logger::DEBUG
+    logger.level = level
     logger.formatter = proc { |_, _, _, msg| msg.sub("[Redis]", "").strip + "\n" }
     logger
   end
@@ -100,22 +100,51 @@ RSpec.describe Redisbetween do
           expect(stream.string).not_to include("🔚")
         end
       end
-
     end
 
-    it 'should disallow unsupported commands when enabled' do
-      client = Redis.new(url: 'redis://127.0.0.1:7006/10', disallow_unsupported_redisbetween_commands: true)
-      expect { client.select(2) }.to raise_error(Redisbetween::Error)
-    end
+    describe :handle_unsupported_redisbetween_commands do
+      it 'should raise on unsupported commands when set to :raise' do
+        client = Redis.new(
+          url: 'redis://127.0.0.1:7006/10',
+          handle_unsupported_redisbetween_commands: ->(_cmd) { raise "hi" }
+        )
+        expect { client.select(2) }.to raise_error("hi")
+      end
 
-    it 'should not mess with unsupported commands when not enabled' do
-      client = Redis.new(url: 'redis://127.0.0.1:7006/10')
-      expect(client.select(2)).to eq("OK")
-    end
+      it 'standalone: should call the given proc' do
+        stream = StringIO.new
+        logger = test_logger(stream)
+        client = Redis.new(
+          url: 'redis://127.0.0.1:7006/10',
+          handle_unsupported_redisbetween_commands: ->(cmd) { logger.warn("hi #{cmd}") }
+        )
+        client.select(2)
+        expect(stream.string).to include("hi select")
+      end
 
-    it 'should disallow multi without a block' do
-      client = Redis.new(url: 'redis://127.0.0.1:7006/10', disallow_unsupported_redisbetween_commands: true)
-      expect { client.multi }.to raise_error(Redisbetween::Error)
+      it 'cluster: should call the given proc' do
+        stream = StringIO.new
+        logger = test_logger(stream)
+        client = Redis.new(
+          cluster: ['redis://127.0.0.1:7000'],
+          handle_unsupported_redisbetween_commands: ->(cmd) { logger.warn(cmd) }
+        )
+        client.wait(1, 1)
+        expect(stream.string).to include("wait")
+      end
+
+      it 'should not mess with unsupported commands when not enabled' do
+        client = Redis.new(url: 'redis://127.0.0.1:7006/10')
+        expect(client.select(2)).to eq("OK")
+      end
+
+      it 'should disallow multi without a block' do
+        client = Redis.new(
+          url: 'redis://127.0.0.1:7006/10',
+          handle_unsupported_redisbetween_commands: ->(cmd) { raise cmd }
+        )
+        expect { client.multi }.to raise_error("multi without a block")
+      end
     end
   end
 end

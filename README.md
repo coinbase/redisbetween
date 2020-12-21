@@ -47,12 +47,13 @@ be the only socket created. However, redisbetween will inspect responses to `CLU
 cluster members that it hasn't yet seen. When it sees a new cluster member, it allocates a new connection pool and unix
 socket for it before relaying the response to the client.
 
-### Redisbetween gem
+### Redisbetween Gem
 
-This repo contains a gem that todo ...
+The [ruby](/ruby) directory contains a ruby gem that monkey patches the ruby redis client to support redisbetween. See
+the [readme](/ruby/README.md) for more details.
 
-Here's an example of a similar patch to the go-redis client. Note that this one does not handle db number selection, as
-that is not supported by redis cluster anyway.
+Here's an example of a patch to the go-redis client. Note that this one does not handle db number selection, as that is
+not supported by redis cluster anyway.
 
 ```go
 opt := &redis.ClusterOptions{

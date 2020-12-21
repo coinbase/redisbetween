@@ -1,8 +1,33 @@
 # Redisbetween
 
-Welcome to your new gem! In this directory, you'll find the files you need to be able to package up your Ruby library into a gem. Put your Ruby code in the file `lib/redisbetween`. To experiment with that code, run `bin/console` for an interactive prompt.
+Client patches for the [ruby redis driver](https://github.com/redis/redis-rb).
 
-TODO: Delete this and the text above, and describe your gem
+### Example Usage
+
+```ruby
+require 'redis'
+require 'redisbetween'
+
+cluster = Redis.new(cluster: ["redis://127.0.0.1:7000"], convert_to_redisbetween_socket: true)
+puts cluster.get("hello cluster")
+
+standalone = Redis.new(url: "redis://127.0.0.1:7006", convert_to_redisbetween_socket: true)
+puts standalone.get("hello redis")
+```
+
+When `require`d in a project, it adds two new options to `Redis.new`.
+
+#### `:convert_to_redisbetween_socket`
+
+Accepts a boolean or a proc.
+
+- Calling `Redis.new` with `url` or `host` & `port` options pointing to a remote redis deployment will return a redis client pointed at a local unix socket path instead. The name of the socket will be derived from the host, port and path given. By default the socket path will be `/var/tmp/redisbetween-#{host}-#{port}-#{path}.sock` but this can be customized by passing a proc to `:convert_to_redisbetween_socket`. The proc will be called with 3 arguments (`host`, `port` and `path`).
+
+- This option will cause pipelined commands to be transmitted with an extra start signal message prepended, and an end signal message appended. Redisbetween requires these signal messages in order to support pipelined commands.
+
+#### `:handle_unsupported_redisbetween_commands`
+
+Accepts a proc which is called when an unsupported command is called. When undefined, does not change client behavior. Use this to log before rolling out redisbetween, or to raise in specs.
 
 ## Installation
 
@@ -20,17 +45,6 @@ Or install it yourself as:
 
     $ gem install redisbetween
 
-## Usage
-
-TODO: Write usage instructions here
-
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
-
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and tags, and push the `.gem` file to [rubygems.org](https://rubygems.org).
-
-## Contributing
-
-Bug reports and pull requests are welcome on GitHub at https://github.com/[USERNAME]/redisbetween.
-
+The tests perform an integration test against a running redis cluster and instance of redisbetween. Use `make ruby-test` in this repo's Makefile to run them.
