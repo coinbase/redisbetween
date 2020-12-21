@@ -40,7 +40,6 @@ type Proxy struct {
 	minPoolSize        int
 	readTimeout        time.Duration
 	writeTimeout       time.Duration
-	cluster            bool
 	database           int
 
 	quit chan interface{}
@@ -51,7 +50,7 @@ type Proxy struct {
 	listenerWg   sync.WaitGroup
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, cluster bool, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -72,7 +71,6 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		maxPoolSize:        maxPoolSize,
 		readTimeout:        readTimeout,
 		writeTimeout:       writeTimeout,
-		cluster:            cluster,
 		database:           database,
 
 		quit: make(chan interface{}),
@@ -159,10 +157,6 @@ func (p *Proxy) runListener(l *listener.Listener) {
 }
 
 func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
-	if !p.cluster {
-		return
-	}
-
 	for i, m := range mm {
 		if originalCmds[i] == "CLUSTER SLOTS" {
 			b, err := redis.EncodeToBytes(m)

@@ -21,7 +21,7 @@ import (
 // a standalone redis on port 7006. see docker-compose.yml
 
 func TestProxy(t *testing.T) {
-	sd := setupProxy(t, "7006", -1, false)
+	sd := setupProxy(t, "7006", -1)
 
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
@@ -43,7 +43,7 @@ type command struct {
 }
 
 func TestIntegrationCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7000", -1, true)
+	shutdownProxy := setupProxy(t, "7000", -1)
 	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-127.0.0.1-7000.sock")
 	var i int
 	var wg sync.WaitGroup
@@ -73,7 +73,7 @@ func TestIntegrationCommands(t *testing.T) {
 }
 
 func TestPipelinedCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7006", 3, true)
+	shutdownProxy := setupProxy(t, "7006", 3)
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
 	var i int
 	var wg sync.WaitGroup
@@ -106,7 +106,7 @@ func TestPipelinedCommands(t *testing.T) {
 }
 
 func TestDbSelectCommand(t *testing.T) {
-	shutdown := setupProxy(t, "7006", 3, false)
+	shutdown := setupProxy(t, "7006", 3)
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
@@ -151,7 +151,7 @@ func assertResponsePipelined(t *testing.T, cmds []command, c *redis.Client) {
 	assert.Equal(t, expected, actualStrings)
 }
 
-func setupProxy(t *testing.T, upstreamPort string, db int, cluster bool) func() {
+func setupProxy(t *testing.T, upstreamPort string, db int) func() {
 	t.Helper()
 
 	uri := "127.0.0.1:" + upstreamPort
@@ -169,7 +169,7 @@ func setupProxy(t *testing.T, upstreamPort string, db int, cluster bool) func() 
 		Unlink:            true,
 	}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, cluster, 1, 1, 1*time.Second, 1*time.Second)
+	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, 1, 1*time.Second, 1*time.Second)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run()

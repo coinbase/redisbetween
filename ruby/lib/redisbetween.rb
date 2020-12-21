@@ -26,8 +26,8 @@ module Redisbetween
           end
         elsif options[:host] && options[:port] && options[:scheme] != 'unix'
           path = Redisbetween.socket_path(options[:convert_to_redisbetween_socket], options[:host], options[:port])
-          options[:url] = "unix:#{path}"
           [:port, :host, :scheme].each { |k| options[k] = nil }
+          options[:url] = "unix:#{path}"
         end
       end
       @redisbetween_pipeline_signals_enabled = !!options[:redisbetween_pipeline_signals_enabled] || @redisbetween_enabled

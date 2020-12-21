@@ -29,8 +29,6 @@ steps:
 
   - label: ruby-tests
     commands:
-      - make build
-      - bin/redisbetween -unlink -network unix redis://127.0.0.1:7000?label=cluster redis://127.0.0.1:7006?label=standalone &
       - make ruby-setup ruby-test
     plugins:
       - file:///buildkite/plugins/docker-compose:

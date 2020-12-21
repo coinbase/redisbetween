@@ -4,7 +4,7 @@ services:
   redis-cluster:
     image: 'grokzen/redis-cluster:6.0.9'
     environment:
-      IP: ${REDIS_CLUSTER_IP}
+      IP: 0.0.0.0
       SENTINEL: 'false'
       STANDALONE: '1'
     hostname: server
@@ -12,6 +12,11 @@ services:
       - '7000-7050:7000-7050'
 
   redis-monitor:
+    image: 'redis'
+    command: 'redis-cli -p 7000 -h redis-cluster monitor'
+    restart: always
+
+  redis-monitor2:
     image: 'redis'
     command: 'redis-cli -p 7006 -h redis-cluster monitor'
     restart: always
