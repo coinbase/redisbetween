@@ -167,11 +167,6 @@ func parseFlags() (*Config, error) {
 	}, nil
 }
 
-func getBoolParam(v url.Values, key, val string) bool {
-	cl, ok := v[key]
-	return ok && cl[0] == val
-}
-
 func getStringParam(v url.Values, key, def string) string {
 	cl, ok := v[key]
 	if !ok {
