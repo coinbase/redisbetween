@@ -36,12 +36,9 @@ RSpec.describe Redisbetween do
 
     it 'should point the cluster to a socket when given a url' do
       client = Redis.new(cluster: ["redis://127.0.0.1:7000"], convert_to_redisbetween_socket: true)
-      expected = [
-        "/var/tmp/redisbetween-127.0.0.1-7000.sock",
-        "/var/tmp/redisbetween-127.0.0.1-7001.sock",
-        "/var/tmp/redisbetween-127.0.0.1-7002.sock",
-      ]
-      expect(client._client.connection_info.map { |l| l[:location] }.sort).to eq(expected)
+      client._client.connection_info.map { |l| l[:location] }.each do |loc|
+        expect(loc).to match(/\/var\/tmp\/redisbetween-\d+\.\d+\.\d+\.\d+-\d+.sock/)
+      end
     end
 
     it 'should point the client to a socket when given host and port' do
@@ -56,34 +53,54 @@ RSpec.describe Redisbetween do
   end
 
   describe Redisbetween::RedisPatch do
-    it 'should prepend and append the signal messages to all pipelines when enabled' do
-      stream = StringIO.new
-      client = Redis.new(url: 'redis://127.0.0.1:7006/1', redisbetween_pipeline_signals_enabled: true, logger: test_logger(stream))
-      client.pipelined do
-        client.set("hi", 1)
-        client.get("hi")
-      end
-      expect(stream.string).to start_with(<<~LOG
-        command=GET args="🔜"
-        command=SET args="hi" "1"
-        command=GET args="hi"
-        command=GET args="🔚"
-      LOG
-      )
-    end
+    [
+      { url: 'redis://127.0.0.1:7006' }, # standalone
+      { cluster: ['redis://127.0.0.1:7000'] }, # cluster
+    ].each do |options|
+      context "with #{options}" do
+        it 'should prepend and append the signal messages to all pipelines when enabled' do
+          stream = StringIO.new
+          client = Redis.new(options.merge({ convert_to_redisbetween_socket: true, logger: test_logger(stream) }))
+          res = client.pipelined do
+            client.set("hi", 1)
+            client.get("hi")
+            client.set("yes", "maybe")
+            client.get("yes")
+          end
+          expect(res).to eq(%w[OK 1 OK maybe])
+          expect(stream.string).to include(<<~LOG
+            command=GET args="🔜"
+            command=SET args="hi" "1"
+            command=GET args="hi"
+            command=SET args="yes" "maybe"
+            command=GET args="yes"
+            command=GET args="🔚"
+          LOG
+          )
+        end
 
-    it 'should not prepend or append the signal messages to any pipelines when not enabled' do
-      stream = StringIO.new
-      client = Redis.new(url: 'redis://127.0.0.1:7006/1', logger: test_logger(stream))
-      client.pipelined do
-        client.set("hi", 1)
-        client.get("hi")
+        it 'should not prepend or append the signal messages to any pipelines when not enabled' do
+          stream = StringIO.new
+          client = Redis.new(options.merge({ logger: test_logger(stream) }))
+          res = client.pipelined do
+            client.set("hi", 1)
+            client.get("hi")
+            client.set("yes", "maybe")
+            client.get("yes")
+          end
+          expect(res).to eq(%w[OK 1 OK maybe])
+          expect(stream.string).to include(<<~LOG
+            command=SET args="hi" "1"
+            command=GET args="hi"
+            command=SET args="yes" "maybe"
+            command=GET args="yes"
+          LOG
+          )
+          expect(stream.string).not_to include("🔜")
+          expect(stream.string).not_to include("🔚")
+        end
       end
-      expect(stream.string).to start_with(<<~LOG
-        command=SET args="hi" "1"
-        command=GET args="hi"
-      LOG
-      )
+
     end
 
     it 'should disallow unsupported commands when enabled' do

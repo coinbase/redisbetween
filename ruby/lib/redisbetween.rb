@@ -30,16 +30,16 @@ module Redisbetween
           options[:url] = "unix:#{path}"
         end
       end
-      @redisbetween_pipeline_signals_enabled = !!options[:redisbetween_pipeline_signals_enabled] || @redisbetween_enabled
       super(options)
     end
 
-    def call_pipelined(pipeline)
-      if @redisbetween_pipeline_signals_enabled
+    def call_pipeline(pipeline)
+      if @redisbetween_enabled
         pipeline.futures.unshift(Redis::Future.new([:get, PIPELINE_START_SIGNAL], nil, nil))
         pipeline.futures << Redis::Future.new([:get, PIPELINE_END_SIGNAL], nil, nil)
       end
-      super
+
+      @redisbetween_enabled ? super[1..-2] : super
     end
   end
 
