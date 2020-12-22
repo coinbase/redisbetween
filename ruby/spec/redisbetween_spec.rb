@@ -50,9 +50,7 @@ RSpec.describe Redisbetween do
       client = Redis.new(url: 'redis://127.0.0.1:7006/10')
       expect(client._client.options[:url]).to eq('redis://127.0.0.1:7006/10')
     end
-  end
 
-  describe Redisbetween::RedisPatch do
     [
       { url: 'redis://127.0.0.1:7006' }, # standalone
       { cluster: ['redis://127.0.0.1:7000'] }, # cluster
@@ -128,21 +126,23 @@ RSpec.describe Redisbetween do
           end
           expect(res).to eq(%w[OK 1 OK maybe])
           expect(stream.string).to include(<<~LOG
+            command=MULTI args=
             command=SET args="{1}hi" "1"
             command=GET args="{1}hi"
             command=SET args="{1}yes" "maybe"
             command=GET args="{1}yes"
+            command=EXEC args=
           LOG
           )
         end
       end
     end
 
-    describe :handle_unsupported_redisbetween_commands do
+    describe :handle_unsupported_redisbetween_command do
       it 'should raise on unsupported commands when set to :raise' do
         client = Redis.new(
           url: 'redis://127.0.0.1:7006/10',
-          handle_unsupported_redisbetween_commands: ->(_cmd) { raise "hi" }
+          handle_unsupported_redisbetween_command: ->(_cmd) { raise "hi" }
         )
         expect { client.select(2) }.to raise_error("hi")
       end
@@ -152,7 +152,7 @@ RSpec.describe Redisbetween do
         logger = test_logger(stream)
         client = Redis.new(
           url: 'redis://127.0.0.1:7006/10',
-          handle_unsupported_redisbetween_commands: ->(cmd) { logger.warn("hi #{cmd}") }
+          handle_unsupported_redisbetween_command: ->(cmd) { logger.warn("hi #{cmd}") }
         )
         client.select(2)
         expect(stream.string).to include("hi select")
@@ -163,7 +163,7 @@ RSpec.describe Redisbetween do
         logger = test_logger(stream)
         client = Redis.new(
           cluster: ['redis://127.0.0.1:7000'],
-          handle_unsupported_redisbetween_commands: ->(cmd) { logger.warn(cmd) }
+          handle_unsupported_redisbetween_command: ->(cmd) { logger.warn(cmd) }
         )
         client.wait(1, 1)
         expect(stream.string).to include("wait")
@@ -177,7 +177,7 @@ RSpec.describe Redisbetween do
       it 'should disallow multi without a block' do
         client = Redis.new(
           url: 'redis://127.0.0.1:7006/10',
-          handle_unsupported_redisbetween_commands: ->(cmd) { raise cmd }
+          handle_unsupported_redisbetween_command: ->(cmd) { raise cmd }
         )
         expect { client.multi }.to raise_error("multi without a block")
       end

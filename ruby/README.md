@@ -25,7 +25,7 @@ Accepts a boolean or a proc.
 
 - This option will cause pipelined commands to be transmitted with an extra start signal message prepended, and an end signal message appended. Redisbetween requires these signal messages in order to support pipelined commands.
 
-#### `:handle_unsupported_redisbetween_commands`
+#### `:handle_unsupported_redisbetween_command`
 
 Accepts a proc which is called when an unsupported command is called. When undefined, does not change client behavior. Use this to log before rolling out redisbetween, or to raise in specs.
 

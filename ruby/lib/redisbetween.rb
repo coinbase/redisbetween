@@ -8,23 +8,16 @@ module Redisbetween
   PIPELINE_START_SIGNAL = '🔜'
   PIPELINE_END_SIGNAL = '🔚'
 
-  module Common
+  module ClientPatch
     attr_reader :redisbetween_enabled
 
-    def redisbetween_options(options)
+    def initialize(options = {})
       @redisbetween_enabled = !!options[:convert_to_redisbetween_socket]
-      @handle_unsupported_redisbetween_command = options[:handle_unsupported_redisbetween_commands]
+      @handle_unsupported_redisbetween_command = options[:handle_unsupported_redisbetween_command]
       if @redisbetween_enabled
         @handle_unsupported_redisbetween_command ||= ->(cmd) { puts "redisbetween: unsupported #{cmd}" }
       end
-    end
-  end
 
-  module ClientPatch
-    include Common
-
-    def initialize(options = {})
-      redisbetween_options(options)
       if redisbetween_enabled
         if options[:url]
           u = URI(options[:url])
@@ -70,9 +63,13 @@ module Redisbetween
     end
 
     def process(commands)
+      @handle_unsupported_redisbetween_command&.call("multi without a block") if commands == [[:multi]]
+
       logging(commands) do
         ensure_connected do
-          _rb_wrapped_write(commands.size > 1) do
+          wrap = commands.size > 1 && redisbetween_enabled
+
+          _rb_wrapped_write(wrap) do
             commands.each do |command|
               if command_map[command.first]
                 command = command.dup
@@ -83,39 +80,25 @@ module Redisbetween
             end
           end
 
-          _rb_wrapped_read(commands.size > 1) do
+          _rb_wrapped_read(wrap) do
             yield if block_given?
           end
         end
       end
     end
 
-    def _rb_wrapped_write(is_pipeline = false)
-      write([:get, PIPELINE_START_SIGNAL]) if is_pipeline && redisbetween_enabled
+    def _rb_wrapped_write(wrap)
+      write([:get, PIPELINE_START_SIGNAL]) if wrap
       yield
-      write([:get, PIPELINE_END_SIGNAL]) if is_pipeline && redisbetween_enabled
+      write([:get, PIPELINE_END_SIGNAL]) if wrap
     end
 
     # the proxy sends back nil values as placeholders for the signals, so discard them
-    def _rb_wrapped_read(is_pipeline = false)
-      read if is_pipeline && redisbetween_enabled
+    def _rb_wrapped_read(wrap)
+      read if wrap
       res = yield
-      read if is_pipeline && redisbetween_enabled
+      read if wrap
       res
-    end
-  end
-
-  module RedisPatch
-    include Common
-
-    def initialize(options = {})
-      redisbetween_options(options)
-      super(options)
-    end
-
-    def multi(*args, &block)
-      @handle_unsupported_redisbetween_command&.call("multi without a block") unless block_given?
-      super
     end
   end
 
@@ -132,5 +115,4 @@ module Redisbetween
   end
 end
 
-Redis.prepend(Redisbetween::RedisPatch)
 Redis::Client.prepend(Redisbetween::ClientPatch)
