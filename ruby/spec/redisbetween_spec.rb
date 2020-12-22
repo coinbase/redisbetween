@@ -69,12 +69,10 @@ RSpec.describe Redisbetween do
           end
           expect(res).to eq(%w[OK 1 OK maybe])
           expect(stream.string).to include(<<~LOG
-            command=GET args="🔜"
             command=SET args="hi" "1"
             command=GET args="hi"
             command=SET args="yes" "maybe"
             command=GET args="yes"
-            command=GET args="🔚"
           LOG
           )
         end
@@ -90,14 +88,12 @@ RSpec.describe Redisbetween do
           end
           expect(res).to eq(%w[OK 1 OK maybe])
           expect(stream.string).to include(<<~LOG
-            command=GET args="🔜"
-            command=MULTI
-            command=SET args="hi" "1"
-            command=GET args="hi"
-            command=SET args="yes" "maybe"
-            command=GET args="yes"
-            command=EXEC
-            command=GET args="🔚"
+            command=MULTI args=
+            command=SET args="{1}hi" "1"
+            command=GET args="{1}hi"
+            command=SET args="{1}yes" "maybe"
+            command=GET args="{1}yes"
+            command=EXEC args=
           LOG
           )
         end
@@ -119,8 +115,25 @@ RSpec.describe Redisbetween do
             command=GET args="yes"
           LOG
           )
-          expect(stream.string).not_to include("🔜")
-          expect(stream.string).not_to include("🔚")
+        end
+
+        it 'should not prepend or append the signal messages to multis when not enabled' do
+          stream = StringIO.new
+          client = Redis.new(options.merge({ logger: test_logger(stream) }))
+          res = client.multi do
+            client.set("{1}hi", 1)
+            client.get("{1}hi")
+            client.set("{1}yes", "maybe")
+            client.get("{1}yes")
+          end
+          expect(res).to eq(%w[OK 1 OK maybe])
+          expect(stream.string).to include(<<~LOG
+            command=SET args="{1}hi" "1"
+            command=GET args="{1}hi"
+            command=SET args="{1}yes" "maybe"
+            command=GET args="{1}yes"
+          LOG
+          )
         end
       end
     end

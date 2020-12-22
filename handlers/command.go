@@ -88,16 +88,6 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		return l, err
 	}
 
-	// the only time we have multiple messages is when they are pipelined, and
-	// therefore have the signal messages prepended/appended, so do not bother
-	// sending those to the upstream. we will make dummy responses later and
-	// send them to the downstream client.
-	var pipeline bool
-	if len(wm) > 2 {
-		pipeline = true
-		wm = wm[1 : len(wm)-1]
-	}
-
 	incomingCmds, err := c.validateCommands(wm)
 	if err != nil {
 		mm := []*redis.Message{redis.NewError([]byte(fmt.Sprintf("redisbetween: %v", err.Error())))}
@@ -112,7 +102,7 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 
 	c.interceptor(incomingCmds, wm)
 
-	err = WriteWireMessages(c.ctx, l, wm, c.conn, c.address, c.id, 0, pipeline, c.conn.Close)
+	err = WriteWireMessages(c.ctx, l, wm, c.conn, c.address, c.id, 0, len(wm) > 1, c.conn.Close)
 	return l, err
 }
 
@@ -269,12 +259,14 @@ func ReadWireMessages(ctx context.Context, log *zap.Logger, nc net.Conn, address
 		if err != nil {
 			return nil, err
 		}
-		wm = appendMessage(wm, m)
 		if checkPipelineSignals && isSignalMessage(m, PipelineSignalStartKey) {
 			pipelineOpen = true
+			continue
 		} else if checkPipelineSignals && isSignalMessage(m, PipelineSignalEndKey) {
 			pipelineOpen = false
+			continue
 		}
+		wm = appendMessage(wm, m)
 	}
 	return wm, nil
 }

@@ -83,10 +83,8 @@ func TestReadWireMessagesPipeline(t *testing.T) {
 		"*2\r\n$3\r\nGET\r\n$4\r\n🔚\r\n",
 	}
 	expected := []string{
-		"*2 \\r\\n $3 \\r\\n GET \\r\\n $4 \\r\\n 🔜 \\r\\n ",
 		"*3 \\r\\n $3 \\r\\n SET \\r\\n $2 \\r\\n hi \\r\\n $1 \\r\\n 1 \\r\\n ",
 		"*2 \\r\\n $3 \\r\\n GET \\r\\n $2 \\r\\n hi \\r\\n ",
-		"*2 \\r\\n $3 \\r\\n GET \\r\\n $4 \\r\\n 🔚 \\r\\n ",
 	}
 	testReadWireMessagesHelper(t, 1, true, commands, expected)
 }

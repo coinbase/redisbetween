@@ -45,15 +45,6 @@ module Redisbetween
       super(options)
     end
 
-    def call_pipeline(pipeline)
-      if redisbetween_enabled
-        pipeline.futures.unshift(Redis::Future.new([:get, PIPELINE_START_SIGNAL], nil, nil))
-        pipeline.futures << Redis::Future.new([:get, PIPELINE_END_SIGNAL], nil, nil)
-      end
-
-      redisbetween_enabled ? super[1..-2] : super
-    end
-
     UNSUPPORTED_COMMANDS = [
       :auth,
       :blpop,
@@ -77,6 +68,41 @@ module Redisbetween
       end
       super
     end
+
+    def process(commands)
+      logging(commands) do
+        ensure_connected do
+          _rb_wrapped_write(commands.size > 1) do
+            commands.each do |command|
+              if command_map[command.first]
+                command = command.dup
+                command[0] = command_map[command.first]
+              end
+
+              write(command)
+            end
+          end
+
+          _rb_wrapped_read(commands.size > 1) do
+            yield if block_given?
+          end
+        end
+      end
+    end
+
+    def _rb_wrapped_write(is_pipeline = false)
+      write([:get, PIPELINE_START_SIGNAL]) if is_pipeline && redisbetween_enabled
+      yield
+      write([:get, PIPELINE_END_SIGNAL]) if is_pipeline && redisbetween_enabled
+    end
+
+    # the proxy sends back nil values as placeholders for the signals, so discard them
+    def _rb_wrapped_read(is_pipeline = false)
+      read if is_pipeline && redisbetween_enabled
+      res = yield
+      read if is_pipeline && redisbetween_enabled
+      res
+    end
   end
 
   module RedisPatch
@@ -88,7 +114,7 @@ module Redisbetween
     end
 
     def multi(*args, &block)
-      @handle_unsupported_redisbetween_command&.call("multi without a block")
+      @handle_unsupported_redisbetween_command&.call("multi without a block") unless block_given?
       super
     end
   end
