@@ -40,7 +40,6 @@ type Proxy struct {
 	minPoolSize        int
 	readTimeout        time.Duration
 	writeTimeout       time.Duration
-	cluster            bool
 	database           int
 
 	quit chan interface{}
@@ -51,7 +50,7 @@ type Proxy struct {
 	listenerWg   sync.WaitGroup
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, cluster bool, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -72,7 +71,6 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		maxPoolSize:        maxPoolSize,
 		readTimeout:        readTimeout,
 		writeTimeout:       writeTimeout,
-		cluster:            cluster,
 		database:           database,
 
 		quit: make(chan interface{}),
@@ -158,52 +156,50 @@ func (p *Proxy) runListener(l *listener.Listener) {
 	}()
 }
 
-func (p *Proxy) interceptMessage(originalCmd string, m *redis.Message) {
-	if !p.cluster {
-		return
-	}
-
-	if originalCmd == "CLUSTER SLOTS" {
-		b, err := redis.EncodeToBytes(m)
-		if err != nil {
-			p.log.Error("failed to encode cluster slots message", zap.Error(err))
+func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
+	for i, m := range mm {
+		if originalCmds[i] == "CLUSTER SLOTS" {
+			b, err := redis.EncodeToBytes(m)
+			if err != nil {
+				p.log.Error("failed to encode cluster slots message", zap.Error(err))
+				return
+			}
+			slots := radix.ClusterTopo{}
+			err = slots.UnmarshalRESP(bufio.NewReader(bytes.NewReader(b)))
+			if err != nil {
+				p.log.Error("failed to unmarshal cluster slots message", zap.Error(err))
+				return
+			}
+			for _, slot := range slots {
+				p.ensureListenerForUpstream(slot.Addr, originalCmds[i])
+			}
 			return
 		}
-		slots := radix.ClusterTopo{}
-		err = slots.UnmarshalRESP(bufio.NewReader(bytes.NewReader(b)))
-		if err != nil {
-			p.log.Error("failed to unmarshal cluster slots message", zap.Error(err))
-			return
-		}
-		for _, slot := range slots {
-			p.ensureListenerForUpstream(slot.Addr, originalCmd)
-		}
-		return
-	}
 
-	if originalCmd == "CLUSTER NODES" {
-		if m.IsBulkBytes() {
-			lines := strings.Split(string(m.Value), "\n")
-			for _, line := range lines {
-				lt := strings.IndexByte(line, ' ')
-				rt := strings.IndexByte(line, '@')
-				if lt > 0 && rt > 0 {
-					hostPort := line[lt+1 : rt]
-					p.ensureListenerForUpstream(hostPort, originalCmd)
+		if originalCmds[i] == "CLUSTER NODES" {
+			if m.IsBulkBytes() {
+				lines := strings.Split(string(m.Value), "\n")
+				for _, line := range lines {
+					lt := strings.IndexByte(line, ' ')
+					rt := strings.IndexByte(line, '@')
+					if lt > 0 && rt > 0 {
+						hostPort := line[lt+1 : rt]
+						p.ensureListenerForUpstream(hostPort, originalCmds[i])
+					}
 				}
 			}
 		}
-	}
 
-	if m.IsError() {
-		msg := string(m.Value)
-		if strings.HasPrefix(msg, "MOVED") || strings.HasPrefix(msg, "ASK") {
-			parts := strings.Split(msg, " ")
-			if len(parts) < 3 {
-				p.log.Error("failed to parse MOVED error", zap.String("original command", originalCmd), zap.String("original message", msg))
-				return
+		if m.IsError() {
+			msg := string(m.Value)
+			if strings.HasPrefix(msg, "MOVED") || strings.HasPrefix(msg, "ASK") {
+				parts := strings.Split(msg, " ")
+				if len(parts) < 3 {
+					p.log.Error("failed to parse MOVED error", zap.String("original command", originalCmds[i]), zap.String("original message", msg))
+					return
+				}
+				p.ensureListenerForUpstream(parts[2], originalCmds[i]+" "+parts[0])
 			}
-			p.ensureListenerForUpstream(parts[2], originalCmd+" "+parts[0])
 		}
 	}
 }
@@ -280,7 +276,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, s, kill, p.interceptMessage)
+		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, s, kill, p.interceptMessages)
 	}
 	shutdownHandler := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)

@@ -35,7 +35,6 @@ type Upstream struct {
 	Label              string
 	MaxPoolSize        int
 	MinPoolSize        int
-	Cluster            bool
 	Database           int
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
@@ -133,14 +132,9 @@ func parseFlags() (*Config, error) {
 				Label:              getStringParam(params, "label", ""),
 				MaxPoolSize:        getIntParam(params, "maxpoolsize", 10),
 				MinPoolSize:        getIntParam(params, "minpoolsize", 1),
-				Cluster:            getBoolParam(params, "cluster", "true"),
 				Database:           db,
 				ReadTimeout:        rt,
 				WriteTimeout:       wt,
-			}
-
-			if us.Cluster && us.Database > -1 {
-				return nil, errors.New("redis cluster does not support multiple databases")
 			}
 
 			upstreams = append(upstreams, us)
@@ -171,11 +165,6 @@ func parseFlags() (*Config, error) {
 		Statsd:            stats,
 		Level:             level,
 	}, nil
-}
-
-func getBoolParam(v url.Values, key, val string) bool {
-	cl, ok := v[key]
-	return ok && cl[0] == val
 }
 
 func getStringParam(v url.Values, key, def string) string {

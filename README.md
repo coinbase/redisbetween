@@ -7,16 +7,21 @@ that cannot otherwise share a connection pool need to connect to a single redis 
 redisbetween supports both standalone and clustered redis deployments with the following caveats:
 
 - **Blocking Commands** that cause the client to hold a connection open such as `BLPOP`, `BRPOPLPUSH`, `SUBSCRIBE` and
-`WAIT` are not allowed by redisbetween because of the risk of exhausting the connection pool. redisbetween is not a good
-solution for clients like sidekiq that rely heavily on these blocking commands.
+`WAIT` are not allowed by redisbetween because of the risk of exhausting the connection pool. For example, redisbetween
+is not a good solution for sidekiq servers which rely on these blocking commands.
 
-- **Transactions** are not supported. This means that the commands `DISCARD`, `EXEC`, `MULTI`, `UNWATCH` and `WATCH`
-will return errors from the proxy before they reach an upstream host. This is because redis stores state about open
-transactions on the server side, attached to each client connection. In order to support transactions, each one would
-have to pin a connection from the pool to a single client while a transaction were open. redisbetween disables these
-commands to avoid cases where applications could accidentally exhaust the connection pool.
+- **Pipelines** are supported, but require a client patch. Normally, redis clients may send multiple commands
+back-to-back before reading a batch of responses all at once from the server. Since redisbetween shares upstream
+connections among many clients, it relies on special "signal" messages to indicate the beginning and end of batched
+commands. Clients using redisbetween must prepend a `GET 🔜` and append a `GET 🔚` to their batch of messages in order
+for redisbetween to properly proxy the pipelined commands and responses.
 
-- **Pipelines** are not supported. It may be possible to add support for pipelines to redisbetween in the future.
+- **Transactions are only supported _within pipelines_.** This means that the commands `DISCARD`, `EXEC`, `MULTI`,
+`UNWATCH` and `WATCH` will return errors from the proxy before they reach an upstream host unless they occur between the
+two signal values described above in the **Pipelines** section. This is because redis stores state about open
+transactions on the server side, attached to each client connection. In order to support transactions without
+connection-pinning, we require that the full set of operations be sent in one batch so that the connection we check back
+into the pool does not leak state to other clients.
 
 - The **SELECT** command, which is used by redis clients when connecting to a db other than the default `0`, is not
 allowed. However, redisbetween _does_ support multiple dbs by specifying the db number in the endpoint url path. With an
@@ -42,43 +47,13 @@ be the only socket created. However, redisbetween will inspect responses to `CLU
 cluster members that it hasn't yet seen. When it sees a new cluster member, it allocates a new connection pool and unix
 socket for it before relaying the response to the client.
 
-**Important** - Redis clients must be patched to translate URLs to local sockets according to the naming scheme
-*described above. For example, here's a patch to the ruby redis client:
+### Redisbetween Gem
 
-```ruby
-module RedisPatch
-  def initialize(options = {})
-    if options[:convert_to_redisbetween_socket]
-      if options[:url]
-        u = URI(options[:url])
-        if u.scheme != 'unix'
-          path = u.path.empty? ? nil : u.path.delete_prefix('/')
-          u.path = ['/var/tmp/redisbetween', u.host, u.port, path].compact.join('-') + '.sock'
-          u.host = nil
-          u.port = nil
-          u.scheme = 'unix'
-          options[:url] = u.to_s
-        end
-      elsif options[:host] && options[:port] && options[:scheme] != 'unix'
-        path = ['/var/tmp/redisbetween', options[:host], options[:port]].compact.join('-') + '.sock'
-        options[:url] = "unix:#{path}"
-        [:port, :host, :scheme].each { |k| options[k] = nil }
-      end
-    end
-    super(options)
-  end
-end
+The [ruby](/ruby) directory contains a ruby gem that monkey patches the ruby redis client to support redisbetween. See
+the [readme](/ruby/README.md) for more details.
 
-Redis::Client.prepend(RedisPatch)
-
-cluster = Redis.new(cluster: [{ host: 'some.redis.cluster.com' }], convert_to_redisbetween_socket: true)
-standalone = Redis.new(url: 'redis://some.redis.server.com/3', convert_to_redisbetween_socket: true)
-puts cluster.cluster("slots")
-puts standalone.get("hi")
-```
-
-Here's an example of a similar patch to the go-redis client. Note that this one does not handle db number selection, as
-that is not supported by redis cluster anyway.
+Here's an example of a patch to the go-redis client. Note that this one does not handle db number selection, as that is
+not supported by redis cluster anyway.
 
 ```go
 opt := &redis.ClusterOptions{

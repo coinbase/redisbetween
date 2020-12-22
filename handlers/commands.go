@@ -1,17 +1,6 @@
 package handlers
 
 var UnsupportedCommands = map[string]bool{
-	// redis transactions are stateful on the server side, and are associated with
-	// the connection. for a connection pooling proxy that shares a single connection
-	// among multiple clients, it doesn't make sense to support transactions, as each
-	// one monopolizes a connection from the pool as long as it is open, just like
-	// blocking commands.
-	"DISCARD": true,
-	"EXEC":    true,
-	"MULTI":   true,
-	"UNWATCH": true,
-	"WATCH":   true,
-
 	// blocking commands cause clients to hold a connection open and wait for data to
 	// appear. these monopolize a connection from the pool, so don't make sense to
 	// allow for a connection pooling proxy. if these are required in the future, we
@@ -34,4 +23,21 @@ var UnsupportedCommands = map[string]bool{
 	// with redisbetween without some special work to support them
 	"AUTH":   true,
 	"SELECT": true,
+}
+
+const (
+	TransactionOpen = iota
+	TransactionInner
+	TransactionClose
+)
+
+var TransactionCommands = map[string]int{
+	// redis transactions are stateful on the server side, and are associated with
+	// the connection, so we can only allow them within a set of pipelined commands.
+	// this map helps us keep track whether or not we are inside a transaction.
+	"DISCARD": TransactionClose,
+	"EXEC":    TransactionClose,
+	"MULTI":   TransactionOpen,
+	"UNWATCH": TransactionInner,
+	"WATCH":   TransactionOpen,
 }

@@ -1,0 +1,10 @@
+# modified from https://github.cbhq.net/infra/codeflow/blob/master/lib/builders/baldur/Dockerfile.gem
+
+FROM 652969937640.dkr.ecr.us-east-1.amazonaws.com/containers/ruby-2.6:production
+
+WORKDIR /shared
+ADD ruby ./
+RUN mkdir /gem
+
+# Copy the built .gem file to /gem
+RUN gem build *.gemspec | grep "File:" | cut -d' ' -f4 | xargs -I{} cp {} /gem/

@@ -29,7 +29,7 @@ func TestParseFlags(t *testing.T) {
 		"-readtimeout", "1s",
 		"-writetimeout", "1s",
 		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
-		"redis://localhost:7002?minpoolsize=10&label=cluster2&cluster=true&readtimeout=3s&writetimeout=6s",
+		"redis://localhost:7002?minpoolsize=10&label=cluster2&readtimeout=3s&writetimeout=6s",
 	}
 
 	resetFlags()
@@ -63,21 +63,6 @@ func TestParseFlags(t *testing.T) {
 	assert.Equal(t, 10, upstream2.MinPoolSize)
 	assert.Equal(t, 3*time.Second, upstream2.ReadTimeout)
 	assert.Equal(t, 6*time.Second, upstream2.WriteTimeout)
-	assert.True(t, upstream2.Cluster)
-}
-
-func TestNoDatabaseIdForClusters(t *testing.T) {
-	oldArgs := os.Args
-	defer func() { os.Args = oldArgs }()
-	os.Args = []string{
-		"redisbetween",
-		"-loglevel", "info",
-		"redis://localhost/1?minpoolsize=5&label=cluster1&cluster=true",
-	}
-
-	resetFlags()
-	_, err := parseFlags()
-	assert.EqualError(t, err, "redis cluster does not support multiple databases")
 }
 
 func TestInvalidLogLevel(t *testing.T) {

@@ -12,7 +12,8 @@ steps:
           propagate-environment: true
     agents:
       queue: docker
-  - label: tests
+
+  - label: go-tests
     commands:
       - make test
     env:
@@ -20,7 +21,18 @@ steps:
       GOPROXY: https://gomodules.cbhq.net/
     plugins:
       - file:///buildkite/plugins/docker-compose:
-          run: redisbetween
+          run: go
+          config: .buildkite/docker-compose.test.yml
+          propagate-uid-gid: true
+    agents:
+      queue: docker
+
+  - label: ruby-tests
+    commands:
+      - make ruby-setup ruby-test
+    plugins:
+      - file:///buildkite/plugins/docker-compose:
+          run: ruby
           config: .buildkite/docker-compose.test.yml
           propagate-uid-gid: true
     agents:
