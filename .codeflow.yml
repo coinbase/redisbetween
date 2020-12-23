@@ -4,6 +4,8 @@ secure:
   requires_mfa: true
 build:
   engines:
+    - BaldurECR:
+        path: ./Dockerfile
     - BaldurGem:
         name: gem
         path: ./Dockerfile-gem
