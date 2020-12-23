@@ -55,13 +55,6 @@ module Redisbetween
       :xreadgroup,
     ].to_set.freeze
 
-    def call(command)
-      if UNSUPPORTED_COMMANDS.member?(command&.first)
-        @handle_unsupported_redisbetween_command&.call(command.first.to_s)
-      end
-      super
-    end
-
     def process(commands)
       @handle_unsupported_redisbetween_command&.call("multi without a block") if commands == [[:multi]]
 
@@ -71,6 +64,9 @@ module Redisbetween
 
           _rb_wrapped_write(wrap) do
             commands.each do |command|
+              if UNSUPPORTED_COMMANDS.member?(command.first)
+                @handle_unsupported_redisbetween_command&.call(command.first.to_s)
+              end
               if command_map[command.first]
                 command = command.dup
                 command[0] = command_map[command.first]

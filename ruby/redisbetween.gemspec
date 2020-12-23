@@ -10,7 +10,7 @@ Gem::Specification.new do |spec|
   spec.description   = %q{Client patch for the ruby redis driver to support redisbetween}
   spec.required_ruby_version = Gem::Requirement.new(">= 2.3.0")
 
-  spec.files = Dir.glob('**')
+  spec.files = Dir.glob('**/*.rb')
 
   spec.require_paths = ["lib"]
   spec.add_dependency "redis"
