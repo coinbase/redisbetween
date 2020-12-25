@@ -21,7 +21,7 @@ import (
 // a standalone redis on port 7006. see docker-compose.yml
 
 func TestProxy(t *testing.T) {
-	sd := setupProxy(t, "7006", -1)
+	sd := setupProxy(t, "7006", -1, nil)
 
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
@@ -43,7 +43,7 @@ type command struct {
 }
 
 func TestIntegrationCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7000", -1)
+	shutdownProxy := setupProxy(t, "7000", -1, nil)
 	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-127.0.0.1-7000.sock")
 	var i int
 	var wg sync.WaitGroup
@@ -73,7 +73,7 @@ func TestIntegrationCommands(t *testing.T) {
 }
 
 func TestPipelinedCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7006", 3)
+	shutdownProxy := setupProxy(t, "7006", 3, nil)
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
 	var i int
 	var wg sync.WaitGroup
@@ -106,11 +106,22 @@ func TestPipelinedCommands(t *testing.T) {
 }
 
 func TestDbSelectCommand(t *testing.T) {
-	shutdown := setupProxy(t, "7006", 3)
+	shutdown := setupProxy(t, "7006", 3, nil)
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
 	assert.Contains(t, res.String(), "db=3")
+	shutdown()
+}
+
+func TestInvalidator(t *testing.T) {
+	shutdown := setupProxy(t, "7006", -1, []string{"cached:"})
+	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006.sock")
+	res := client.Do(context.Background(), "SET", "cached:ok", "hello")
+	res2 := client.Do(context.Background(), "SET", "cached:ok", "new value")
+	assert.NoError(t, res.Err())
+	assert.NoError(t, res2.Err())
+	assert.Equal(t, res.String(), "SET cached:ok hello: OK")
 	shutdown()
 }
 
@@ -151,7 +162,7 @@ func assertResponsePipelined(t *testing.T, cmds []command, c *redis.Client) {
 	assert.Equal(t, expected, actualStrings)
 }
 
-func setupProxy(t *testing.T, upstreamPort string, db int) func() {
+func setupProxy(t *testing.T, upstreamPort string, db int, cachePrefixes []string) func() {
 	t.Helper()
 
 	uri := "127.0.0.1:" + upstreamPort
@@ -169,7 +180,7 @@ func setupProxy(t *testing.T, upstreamPort string, db int) func() {
 		Unlink:            true,
 	}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, 1, 1*time.Second, 1*time.Second)
+	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, 1, 1*time.Second, 1*time.Second, cachePrefixes)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run()

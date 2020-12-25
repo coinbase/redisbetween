@@ -27,10 +27,10 @@ func init() {
 
 func TestItoa(t *testing.T) {
 	for i, b := range tmap {
-		assert.Equal(t, itoa(i), string(b))
+		assert.Equal(t, Itoa(i), string(b))
 	}
 	for i := int64(minItoa); i <= maxItoa; i++ {
-		assert.Equal(t, itoa(i), strconv.Itoa(int(i)))
+		assert.Equal(t, Itoa(i), strconv.Itoa(int(i)))
 	}
 }
 

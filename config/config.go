@@ -38,6 +38,7 @@ type Upstream struct {
 	Database           int
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
+	CachePrefixes      []string
 }
 
 func ParseFlags() *Config {
@@ -135,6 +136,7 @@ func parseFlags() (*Config, error) {
 				Database:           db,
 				ReadTimeout:        rt,
 				WriteTimeout:       wt,
+				CachePrefixes:      getStringsParam(params, "cache_prefixes", nil),
 			}
 
 			upstreams = append(upstreams, us)
@@ -185,4 +187,12 @@ func getIntParam(v url.Values, key string, def int) int {
 		return def
 	}
 	return i
+}
+
+func getStringsParam(v url.Values, key string, def []string) []string {
+	cl, ok := v[key]
+	if !ok {
+		return def
+	}
+	return strings.Split(cl[0], ",")
 }

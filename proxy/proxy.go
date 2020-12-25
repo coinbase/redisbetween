@@ -41,6 +41,7 @@ type Proxy struct {
 	readTimeout        time.Duration
 	writeTimeout       time.Duration
 	database           int
+	cachePrefixes      []string
 
 	quit chan interface{}
 	kill chan interface{}
@@ -48,9 +49,13 @@ type Proxy struct {
 	listeners    map[string]*listener.Listener
 	listenerLock sync.Mutex
 	listenerWg   sync.WaitGroup
+
+	invalidators    map[string]*invalidator
+	invalidatorLock sync.Mutex
+	invalidatorWg   sync.WaitGroup
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, cachePrefixes []string) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -72,11 +77,13 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		readTimeout:        readTimeout,
 		writeTimeout:       writeTimeout,
 		database:           database,
+		cachePrefixes:      cachePrefixes,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
 
-		listeners: make(map[string]*listener.Listener),
+		listeners:    make(map[string]*listener.Listener),
+		invalidators: make(map[string]*invalidator),
 	}, nil
 }
 
@@ -126,12 +133,24 @@ func (p *Proxy) run() error {
 		}
 	}()
 
+	if p.cachePrefixes != nil {
+		i, err := newInvalidator(p.upstreamConfigHost)
+		if err != nil {
+			return err
+		}
+		p.invalidatorLock.Lock()
+		p.invalidators[p.upstreamConfigHost] = i
+		p.invalidatorLock.Unlock()
+		p.runInvalidator(i)
+	}
+
 	l, err := p.createListener(p.localConfigHost, p.upstreamConfigHost)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		p.listenerWg.Wait()
+		p.invalidatorWg.Wait()
 	}()
 
 	p.listenerLock.Lock()
@@ -150,6 +169,17 @@ func (p *Proxy) runListener(l *listener.Listener) {
 		defer p.listenerWg.Done()
 
 		err := l.Run()
+		if err != nil {
+			p.log.Error("Error", zap.Error(err))
+		}
+	}()
+}
+
+func (p *Proxy) runInvalidator(i *invalidator) {
+	p.invalidatorWg.Add(1)
+	go func() {
+		defer p.invalidatorWg.Done()
+		err := i.run() // TODO this needs to propagate invalidation events back to the proxy via a channel
 		if err != nil {
 			p.log.Error("Error", zap.Error(err))
 		}
@@ -227,6 +257,21 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 		p.listeners[upstream] = l
 		p.runListener(l)
 	}
+
+	if p.cachePrefixes != nil {
+		_, ok := p.invalidators[upstream]
+		if !ok {
+			p.log.Info("creating invalidator", zap.String("upstream", upstream))
+			i, err := newInvalidator(upstream)
+			if err != nil {
+				p.log.Error("unable to create invalidator", zap.Error(err))
+			}
+			p.invalidatorLock.Lock()
+			p.invalidators[upstream] = i
+			p.invalidatorLock.Unlock()
+			p.runInvalidator(i)
+		}
+	}
 }
 
 func (p *Proxy) createListener(local, upstream string) (*listener.Listener, error) {
@@ -241,34 +286,65 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sdWith) }),
 	}
 
-	// if a db number has been specified, we need to issue a SELECT command before adding
-	// that connection to the pool, so its always pinned to the right db
-	if p.database > -1 {
-		co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
-			return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
-				dlr := &net.Dialer{Timeout: 30 * time.Second}
-				conn, err := dlr.DialContext(ctx, network, address)
-				if err != nil {
-					return conn, err
-				}
+	co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
+		return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+			dlr := &net.Dialer{Timeout: 30 * time.Second}
+			conn, err := dlr.DialContext(ctx, network, address)
+			if err != nil {
+				return conn, err
+			}
+			// if a db number has been specified, we need to issue a SELECT command before
+			// adding that connection to the pool, so its always pinned to the right db
+			if p.database > -1 {
 				d := strconv.Itoa(p.database)
 				_, err = conn.Write([]byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n"))
 				if err != nil {
 					logWith.Error("failed to write select command", zap.Error(err))
 					return conn, err
 				}
+
+				// TODO use Decode here to get a proper response
+
 				res := make([]byte, 5)
 				_, err = io.ReadFull(conn, res)
 				if err != nil || string(res) != "+OK\r\n" {
 					logWith.Error("failed to read select response", zap.Error(err), zap.String("response", string(res)))
 				}
-				return conn, err
-			})
+			}
+
+			if inv, ok := p.invalidators[upstream]; ok && p.cachePrefixes != nil {
+				// TODO move this into invalidator.go ? would be easy to have it generate its own tracking command
+				//CLIENT TRACKING on BCAST PREFIX <list> REDIRECT <ID>
+				cmd := []string{"CLIENT", "TRACKING", "on", "REDIRECT", redis.Itoa(inv.clientId), "BCAST"}
+				//cmd = append(cmd, "REDIRECT")
+				for _, p := range p.cachePrefixes {
+					cmd = append(cmd, "PREFIX", p)
+				}
+
+				wm := "*" + strconv.Itoa(len(cmd)) + "\r\n"
+				for _, c := range cmd {
+					wm = wm + "$" + strconv.Itoa(len(c)) + "\r\n" + c + "\r\n"
+				}
+
+				_, err = conn.Write([]byte(wm))
+				if err != nil {
+					logWith.Error("failed to write CLIENT TRACKING command", zap.Error(err), zap.String("command", wm))
+					return conn, err
+				}
+
+				_, err := redis.Decode(conn)
+				if err != nil {
+					logWith.Error("failed to read CLIENT TRACKING response", zap.Error(err), zap.String("command", wm))
+					return conn, err
+				}
+			}
+
+			return conn, err
 		})
-		opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
-			return append(cos, co)
-		}))
-	}
+	})
+	opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
+		return append(cos, co)
+	}))
 
 	s, err := pool.ConnectServer(pool.Address(upstream), opts...)
 	if err != nil {

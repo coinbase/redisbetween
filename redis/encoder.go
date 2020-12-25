@@ -31,7 +31,7 @@ func init() {
 	itoaBuffer = b.String()
 }
 
-func itoa(i int64) string {
+func Itoa(i int64) string {
 	if i >= minItoa && i <= maxItoa {
 		beg := itoaOffset[i-minItoa]
 		if i == maxItoa {
@@ -153,7 +153,7 @@ func (e *Encoder) encodeTextString(s string) error {
 }
 
 func (e *Encoder) encodeInt(v int64) error {
-	return e.encodeTextString(itoa(v))
+	return e.encodeTextString(Itoa(v))
 }
 
 func (e *Encoder) encodeBulkBytes(b []byte) error {
