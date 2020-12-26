@@ -112,7 +112,7 @@ func (r *Message) String() string {
 	return strings.ReplaceAll(string(bytes), "\r\n", " \\r\\n ")
 }
 
-// returns all the keys touched by the command, in order
+// returns all the keys touched by the command, in order. assumes this message is a command
 func (r *Message) Keys() [][]byte {
 	if !r.IsArray() {
 		return nil
@@ -124,7 +124,7 @@ func (r *Message) Keys() [][]byte {
 	} else if NoKeyCommands[cmd] || len(args) == 0 {
 		return nil
 	}
-	return values(args[:1])
+	return values(args)
 }
 
 func values(mm []*Message) [][]byte {

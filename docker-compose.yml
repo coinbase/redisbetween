@@ -11,12 +11,16 @@ services:
     ports:
       - '7000-7050:7000-7050'
 
-  redis-monitor:
+  redis-monitor-7000:
     image: 'redis'
     command: 'redis-cli -p 7000 -h redis-cluster monitor'
     restart: always
+  redis-monitor-7001:
+    image: 'redis'
+    command: 'redis-cli -p 7001 -h redis-cluster monitor'
+    restart: always
 
-  redis-monitor2:
+  redis-monitor-7006:
     image: 'redis'
     command: 'redis-cli -p 7006 -h redis-cluster monitor'
     restart: always

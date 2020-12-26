@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"fmt"
 	"github.cbhq.net/engineering/redisbetween/redis"
 	"github.com/coocood/freecache"
 )
@@ -19,10 +18,12 @@ func NewCache() *Cache {
 // GET and MGET are cacheable, so `Set` and `Get` deal with single values and arrays alike
 
 func (c *Cache) Set(keys [][]byte, m *redis.Message) {
-	fmt.Println("writing to the Cache", keys, m)
+	if m.IsError() { // could be MOVED, etc
+		return
+	}
 	if m.IsArray() {
-		for i, mm := range m.Array {
-			c.set(keys[i], mm)
+		for i, mm := range m.Array { // recurse to handle nested responses (eg, MGET)
+			c.Set([][]byte{keys[i]}, mm)
 		}
 	} else {
 		c.set(keys[0], m)

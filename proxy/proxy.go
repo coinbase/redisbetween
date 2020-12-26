@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.cbhq.net/engineering/memcachedbetween/listener"
 	"github.cbhq.net/engineering/memcachedbetween/pool"
@@ -12,7 +13,6 @@ import (
 	"github.cbhq.net/engineering/redisbetween/redis"
 	"github.com/coinbase/mongobetween/util"
 	"github.com/mediocregopher/radix/v3"
-	"io"
 	"net"
 	"regexp"
 	"runtime/debug"
@@ -55,10 +55,9 @@ type Proxy struct {
 	listenerLock sync.Mutex
 	listenerWg   sync.WaitGroup
 
-	invalidators    map[string]*invalidator
-	invalidatorLock sync.Mutex
-	invalidatorWg   sync.WaitGroup
-	cache           *Cache
+	invalidators  map[string]*invalidator
+	invalidatorWg sync.WaitGroup
+	cache         *Cache
 }
 
 func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, cachePrefixes []string) (*Proxy, error) {
@@ -140,17 +139,6 @@ func (p *Proxy) run() error {
 		}
 	}()
 
-	if p.cachePrefixes != nil {
-		i, err := newInvalidator(p.upstreamConfigHost)
-		if err != nil {
-			return err
-		}
-		p.invalidatorLock.Lock()
-		p.invalidators[p.upstreamConfigHost] = i
-		p.invalidatorLock.Unlock()
-		p.runInvalidator(i)
-	}
-
 	l, err := p.createListener(p.localConfigHost, p.upstreamConfigHost)
 	if err != nil {
 		return err
@@ -194,20 +182,12 @@ func (p *Proxy) runInvalidator(i *invalidator) {
 }
 
 func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message, rt handlers.RoundTripper) ([]*redis.Message, error) {
-	cacheable := true
-	keys := make([][][]byte, len(mm))
-	for i, m := range mm {
-		if !CacheableCommands[originalCmds[i]] {
-			cacheable = false
-			break
-		}
-		keys[i] = m.Keys()
-	}
+	var cacheKeys [][][]byte
 
-	if cacheable {
-		allCached, err := p.fetchFromCache(keys, originalCmds)
+	if p.cachePrefixes != nil {
+		k, allCached, err := p.fetchFromCache(mm, originalCmds)
+		cacheKeys = k
 		if err == nil {
-			fmt.Println("===> returned from cache", allCached)
 			return allCached, nil
 		}
 	}
@@ -219,8 +199,8 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message, rt
 	}
 
 	for i, m := range mm {
-		if cacheable {
-			p.cache.Set(keys[i], m)
+		if cacheKeys != nil {
+			p.cache.Set(cacheKeys[i], m)
 		}
 
 		if originalCmds[i] == "CLUSTER SLOTS" {
@@ -270,22 +250,32 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message, rt
 	return mm, err
 }
 
-func (p *Proxy) fetchFromCache(keys [][][]byte, originalCmds []string) ([]*redis.Message, error) {
+// returns the slice of keys that were attempted to fetch, the fetched messages,
+// and an error. slice of keys is nil if the messages are not cacheable
+func (p *Proxy) fetchFromCache(mm []*redis.Message, originalCmds []string) ([][][]byte, []*redis.Message, error) {
+	keys := make([][][]byte, len(mm))
+	for i, m := range mm {
+		if !CacheableCommands[originalCmds[i]] {
+			return nil, nil, errors.New("not cacheable")
+		}
+		keys[i] = m.Keys()
+	}
+
 	var err error
 	m := make([]*redis.Message, len(keys))
 	for i, k := range keys {
 		var cached []*redis.Message
 		cached, err = p.cache.GetAll(k)
 		if err != nil {
-			break
+			return keys, nil, errors.New("not found")
 		}
 		if originalCmds[i] == "GET" {
 			m[i] = cached[0]
-		} else {
+		} else { // assumes MGET
 			m[i] = redis.NewArray(cached)
 		}
 	}
-	return m, err
+	return keys, m, err
 }
 
 func localSocketPathFromUpstream(upstream string, database int, prefix, suffix string) string {
@@ -310,21 +300,6 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 		}
 		p.listeners[upstream] = l
 		p.runListener(l)
-	}
-
-	if p.cachePrefixes != nil {
-		_, ok := p.invalidators[upstream]
-		if !ok {
-			p.log.Info("creating invalidator", zap.String("upstream", upstream))
-			i, err := newInvalidator(upstream)
-			if err != nil {
-				p.log.Error("unable to create invalidator", zap.Error(err))
-			}
-			p.invalidatorLock.Lock()
-			p.invalidators[upstream] = i
-			p.invalidatorLock.Unlock()
-			p.runInvalidator(i)
-		}
 	}
 }
 
@@ -351,42 +326,44 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 			// adding that connection to the pool, so its always pinned to the right db
 			if p.database > -1 {
 				d := strconv.Itoa(p.database)
-				_, err = conn.Write([]byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n"))
+				cmd := redis.NewArray([]*redis.Message{
+					redis.NewBulkBytes([]byte("SELECT")),
+					redis.NewBulkBytes([]byte(d)),
+				})
+				err = redis.Encode(conn, cmd)
 				if err != nil {
 					logWith.Error("failed to write select command", zap.Error(err))
 					return conn, err
 				}
-
-				// TODO use Decode here to get a proper response
-
-				res := make([]byte, 5)
-				_, err = io.ReadFull(conn, res)
-				if err != nil || string(res) != "+OK\r\n" {
-					logWith.Error("failed to read select response", zap.Error(err), zap.String("response", string(res)))
+				var wm *redis.Message
+				wm, err = redis.Decode(conn)
+				if err != nil {
+					logWith.Error("failed to read SELECT response", zap.Error(err), zap.String("response", wm.String()))
+					return conn, err
 				}
 			}
 
-			if inv, ok := p.invalidators[upstream]; ok && p.cachePrefixes != nil {
-				// TODO move this into invalidator.go ? would be easy to have it generate its own tracking command
-				cmd := []string{"CLIENT", "TRACKING", "on", "REDIRECT", redis.Itoa(inv.clientID), "BCAST"}
-				for _, p := range p.cachePrefixes {
-					cmd = append(cmd, "PREFIX", p)
-				}
-
-				wm := "*" + strconv.Itoa(len(cmd)) + "\r\n"
-				for _, c := range cmd {
-					wm = wm + "$" + strconv.Itoa(len(c)) + "\r\n" + c + "\r\n"
-				}
-
-				_, err = conn.Write([]byte(wm))
+			// if any cachePrefixes have been specified, we need an extra connection to
+			// listen for invalidation events from the upstream
+			if p.cachePrefixes != nil {
+				p.log.Info("creating invalidator", zap.String("upstream", upstream))
+				inv, err := newInvalidator(upstream)
 				if err != nil {
-					logWith.Error("failed to write CLIENT TRACKING command", zap.Error(err), zap.String("command", wm))
+					logWith.Error("unable to create invalidator", zap.Error(err))
+				}
+				p.invalidators[upstream] = inv
+				p.runInvalidator(inv)
+				cmd := inv.subscribeCommand(p.cachePrefixes)
+				err = redis.Encode(conn, cmd)
+				if err != nil {
+					logWith.Error("failed to write CLIENT TRACKING command", zap.Error(err), zap.String("command", cmd.String()))
 					return conn, err
 				}
 
-				_, err := redis.Decode(conn)
+				var wm *redis.Message
+				wm, err = redis.Decode(conn)
 				if err != nil {
-					logWith.Error("failed to read CLIENT TRACKING response", zap.Error(err), zap.String("command", wm))
+					logWith.Error("failed to read CLIENT TRACKING response", zap.Error(err), zap.String("response", wm.String()))
 					return conn, err
 				}
 			}

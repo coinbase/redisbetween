@@ -23,7 +23,11 @@ func newInvalidator(upstream string) (*invalidator, error) {
 }
 
 func (i *invalidator) getClientID() error {
-	_, err := i.conn.Write([]byte("*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"))
+	cmd := redis.NewArray([]*redis.Message{
+		redis.NewBulkBytes([]byte("CLIENT")),
+		redis.NewBulkBytes([]byte("ID")),
+	})
+	err := redis.Encode(i.conn, cmd)
 	if err != nil {
 		return err
 	}
@@ -35,7 +39,11 @@ func (i *invalidator) getClientID() error {
 	id, _ := redis.Btoi64(m.Value)
 	i.clientID = id
 
-	_, err = i.conn.Write([]byte("*2\r\n$9\r\nSUBSCRIBE\r\n$20\r\n__redis__:invalidate\r\n"))
+	cmd = redis.NewArray([]*redis.Message{
+		redis.NewBulkBytes([]byte("SUBSCRIBE")),
+		redis.NewBulkBytes([]byte("__redis__:invalidate")),
+	})
+	err = redis.Encode(i.conn, cmd)
 	if err != nil {
 		return err
 	}
@@ -47,17 +55,34 @@ func (i *invalidator) getClientID() error {
 	return nil
 }
 
+func (i *invalidator) subscribeCommand(prefixes []string) *redis.Message {
+	parts := []*redis.Message{
+		redis.NewBulkBytes([]byte("CLIENT")),
+		redis.NewBulkBytes([]byte("TRACKING")),
+		redis.NewBulkBytes([]byte("on")),
+		redis.NewBulkBytes([]byte("REDIRECT")),
+		redis.NewBulkBytes([]byte(redis.Itoa(i.clientID))),
+		redis.NewBulkBytes([]byte("BCAST")),
+	}
+	for _, p := range prefixes {
+		parts = append(parts, redis.NewBulkBytes([]byte("PREFIX")), redis.NewBulkBytes([]byte(p)))
+	}
+	return redis.NewArray(parts)
+}
+
 func (i *invalidator) run(cache *Cache) error {
 	// TODO on any connection issue, destroy the cache
+	// TODO do a simple keepalive loop to check for health? or do a canary invalidation every ~10 seconds?
 	for {
 		m, err := redis.Decode(i.conn)
 		if err != nil {
 			return err
 		}
-		if !m.IsArray() || len(m.Array) < 3 {
+		if !m.IsArray() || len(m.Array) < 3 || !m.Array[2].IsArray() {
 			continue
 		}
-		key := m.Array[2].Value
-		_ = cache.Del(key)
+		for _, mm := range m.Array[2].Array {
+			_ = cache.Del(mm.Value)
+		}
 	}
 }
