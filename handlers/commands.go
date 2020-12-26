@@ -11,6 +11,8 @@ var UnsupportedCommands = map[string]bool{
 	"BRPOPLPUSH":   true,
 	"BZPOPMAX":     true,
 	"BZPOPMIN":     true,
+	"XINFO":        true, // streams
+	"XGROUP":       true, // streams
 	"XREAD":        true, // streams
 	"XREADGROUP":   true, // streams
 	"SUBSCRIBE":    true,

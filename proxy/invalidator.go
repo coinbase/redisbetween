@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"fmt"
 	"github.cbhq.net/engineering/redisbetween/redis"
 	"net"
 )
@@ -48,12 +47,17 @@ func (i *invalidator) getClientId() error {
 	return nil
 }
 
-func (i *invalidator) run() error {
+func (i *invalidator) run(cache *Cache) error {
+	// TODO on any connection issue, destroy the cache
 	for {
 		m, err := redis.Decode(i.conn)
-		fmt.Println("===> !!! got message in invalidator, next step: invalidate local cache", m, err)
 		if err != nil {
 			return err
 		}
+		if !m.IsArray() || len(m.Array) < 3 {
+			continue
+		}
+		key := m.Array[2].Value
+		_ = cache.Del(key)
 	}
 }

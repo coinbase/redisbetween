@@ -15,6 +15,53 @@ const (
 	TypeArray     MsgType = '*'
 )
 
+var NoKeyCommands = map[string]bool{
+	"ASKING":       true,
+	"AUTH":         true,
+	"BGREWRITEAOF": true,
+	"BGSAVE":       true,
+	"CLIENT":       true,
+	"CLUSTER":      true,
+	"COMMAND":      true,
+	"CONFIG":       true,
+	"DBSIZE":       true,
+	"DEBUG":        true,
+	"DISCARD":      true,
+	"ECHO":         true,
+	"EVAL":         true,
+	"EVALSHA":      true,
+	"EXEC":         true,
+	"FLUSHALL":     true,
+	"FLUSHDB":      true,
+	"INFO":         true,
+	"KEYS":         true,
+	"LASTSAVE":     true,
+	"MIGRATE":      true,
+	"MONITOR":      true,
+	"MULTI":        true,
+	"OBJECT":       true,
+	"PING":         true,
+	"QUIT":         true,
+	"RANDOMKEY":    true,
+	"READONLY":     true,
+	"READWRITE":    true,
+	"ROLE":         true,
+	"SAVE":         true,
+	"SCAN":         true,
+	"SCRIPT":       true,
+	"SELECT":       true,
+	"SENTINEL":     true,
+	"SHUTDOWN":     true,
+	"SLAVEOF":      true,
+	"SLOWLOG":      true,
+	"SWAPDB":       true,
+	"SYNC":         true,
+	"TIME":         true,
+	"UNWATCH":      true,
+	"WAIT":         true,
+	"WATCH":        true,
+}
+
 func (t MsgType) String() string {
 	switch t {
 	case TypeString:
@@ -63,6 +110,29 @@ func (r *Message) IsArray() bool {
 func (r *Message) String() string {
 	bytes, _ := EncodeToBytes(r)
 	return strings.ReplaceAll(string(bytes), "\r\n", " \\r\\n ")
+}
+
+// returns all the keys touched by the command, in order
+func (r *Message) Keys() [][]byte {
+	if !r.IsArray() {
+		return nil
+	}
+	cmd := strings.ToUpper(string(r.Array[0].Value))
+	args := r.Array[1:]
+	if cmd == "BITOP" && len(args) > 1 {
+		return values(args[1:])
+	} else if NoKeyCommands[cmd] || len(args) == 0 {
+		return nil
+	}
+	return values(args[:1])
+}
+
+func values(mm []*Message) [][]byte {
+	out := make([][]byte, len(mm))
+	for i, m := range mm {
+		out[i] = m.Value
+	}
+	return out
 }
 
 func NewString(value []byte) *Message {

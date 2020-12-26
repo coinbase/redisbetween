@@ -29,7 +29,8 @@ type connection struct {
 	kill         chan interface{}
 	interceptor  MessageInterceptor
 }
-type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
+type RoundTripper func([]*redis.Message) ([]*redis.Message, error)
+type MessageInterceptor func(incomingCmds []string, m []*redis.Message, rt RoundTripper) ([]*redis.Message, error)
 
 var PipelineSignalStartKey = []byte("🔜")
 var PipelineSignalEndKey = []byte("🔚")
@@ -96,11 +97,10 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		return l, err
 	}
 
-	if wm, l, err = c.roundTrip(wm); err != nil {
+	wm, err = c.interceptor(incomingCmds, wm, c.roundTrip)
+	if err != nil {
 		return l, err
 	}
-
-	c.interceptor(incomingCmds, wm)
 
 	err = WriteWireMessages(c.ctx, l, wm, c.conn, c.address, c.id, 0, len(wm) > 1, c.conn.Close)
 	return l, err
@@ -146,28 +146,28 @@ func (c *connection) validateCommands(wm []*redis.Message) ([]string, error) {
 
 }
 
-func (c *connection) roundTrip(wm []*redis.Message) ([]*redis.Message, *zap.Logger, error) {
+func (c *connection) roundTrip(wm []*redis.Message) ([]*redis.Message, error) {
 	l := c.log
 	var err error
 
 	var conn *pool.Connection
 	if conn, err = c.checkoutConnection(); err != nil {
-		return nil, l, err
+		return nil, err
 	}
 	defer func() {
 		_ = conn.Return()
 	}()
 
-	l = c.log.With(zap.Uint64("upstream_id", conn.ID()))
-	l.Debug("Connection checked out")
+	//l = c.log.With(zap.Uint64("upstream_id", conn.ID()))
+	//l.Debug("Connection checked out")
 
 	if err = WriteWireMessages(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.writeTimeout, false, conn.Close); err != nil {
-		return nil, l, err
+		return nil, err
 	}
 
 	res, err := ReadWireMessages(c.ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), c.readTimeout, len(wm), false, conn.Close)
 
-	return res, l, err
+	return res, err
 }
 
 func (c *connection) checkoutConnection() (conn *pool.Connection, err error) {

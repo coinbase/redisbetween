@@ -117,11 +117,12 @@ func TestDbSelectCommand(t *testing.T) {
 func TestInvalidator(t *testing.T) {
 	shutdown := setupProxy(t, "7006", -1, []string{"cached:"})
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006.sock")
-	res := client.Do(context.Background(), "SET", "cached:ok", "hello")
-	res2 := client.Do(context.Background(), "SET", "cached:ok", "new value")
+	_ = client.Do(context.Background(), "SET", "cached:ok", "hello")
+	_ = client.Do(context.Background(), "SET", "cached:ok", "new value")
+	_ = client.Do(context.Background(), "GET", "cached:ok")
+	res := client.Do(context.Background(), "GET", "cached:ok")
 	assert.NoError(t, res.Err())
-	assert.NoError(t, res2.Err())
-	assert.Equal(t, res.String(), "SET cached:ok hello: OK")
+	assert.Equal(t, res.String(), "GET cached:ok: new value")
 	shutdown()
 }
 

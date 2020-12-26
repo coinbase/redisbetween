@@ -6,6 +6,7 @@ require (
 	github.cbhq.net/engineering/memcachedbetween v0.0.0-20201209165622-903d4500e56f
 	github.com/DataDog/datadog-go v4.2.0+incompatible
 	github.com/coinbase/mongobetween v0.0.9
+	github.com/coocood/freecache v1.1.1
 	github.com/go-redis/redis/v8 v8.4.2
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mediocregopher/radix/v3 v3.6.0

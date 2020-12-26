@@ -28,6 +28,11 @@ import (
 const restartSleep = 1 * time.Second
 const disconnectTimeout = 10 * time.Second
 
+var CacheableCommands = map[string]bool{
+	"GET":  true,
+	"MGET": true,
+}
+
 type Proxy struct {
 	log    *zap.Logger
 	statsd *statsd.Client
@@ -53,6 +58,7 @@ type Proxy struct {
 	invalidators    map[string]*invalidator
 	invalidatorLock sync.Mutex
 	invalidatorWg   sync.WaitGroup
+	cache           *Cache
 }
 
 func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, cachePrefixes []string) (*Proxy, error) {
@@ -84,6 +90,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 
 		listeners:    make(map[string]*listener.Listener),
 		invalidators: make(map[string]*invalidator),
+		cache:        NewCache(),
 	}, nil
 }
 
@@ -179,31 +186,59 @@ func (p *Proxy) runInvalidator(i *invalidator) {
 	p.invalidatorWg.Add(1)
 	go func() {
 		defer p.invalidatorWg.Done()
-		err := i.run() // TODO this needs to propagate invalidation events back to the proxy via a channel
+		err := i.run(p.cache)
 		if err != nil {
 			p.log.Error("Error", zap.Error(err))
 		}
 	}()
 }
 
-func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
+func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message, rt handlers.RoundTripper) ([]*redis.Message, error) {
+	cacheable := true
+	keys := make([][][]byte, len(mm))
 	for i, m := range mm {
+		if !CacheableCommands[originalCmds[i]] {
+			cacheable = false
+			break
+		}
+		keys[i] = m.Keys()
+	}
+
+	if cacheable {
+		allCached, err := p.fetchFromCache(keys, originalCmds)
+		if err == nil {
+			fmt.Println("===> returned from cache", allCached)
+			return allCached, nil
+		}
+	}
+
+	var err error
+	mm, err = rt(mm)
+	if err != nil {
+		return mm, err
+	}
+
+	for i, m := range mm {
+		if cacheable {
+			p.cache.Set(keys[i], m)
+		}
+
 		if originalCmds[i] == "CLUSTER SLOTS" {
 			b, err := redis.EncodeToBytes(m)
 			if err != nil {
 				p.log.Error("failed to encode cluster slots message", zap.Error(err))
-				return
+				return mm, err
 			}
 			slots := radix.ClusterTopo{}
 			err = slots.UnmarshalRESP(bufio.NewReader(bytes.NewReader(b)))
 			if err != nil {
 				p.log.Error("failed to unmarshal cluster slots message", zap.Error(err))
-				return
+				return mm, err
 			}
 			for _, slot := range slots {
 				p.ensureListenerForUpstream(slot.Addr, originalCmds[i])
 			}
-			return
+			return mm, err
 		}
 
 		if originalCmds[i] == "CLUSTER NODES" {
@@ -226,12 +261,31 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 				parts := strings.Split(msg, " ")
 				if len(parts) < 3 {
 					p.log.Error("failed to parse MOVED error", zap.String("original command", originalCmds[i]), zap.String("original message", msg))
-					return
+					return mm, err
 				}
 				p.ensureListenerForUpstream(parts[2], originalCmds[i]+" "+parts[0])
 			}
 		}
 	}
+	return mm, err
+}
+
+func (p *Proxy) fetchFromCache(keys [][][]byte, originalCmds []string) ([]*redis.Message, error) {
+	var err error
+	m := make([]*redis.Message, len(keys))
+	for i, k := range keys {
+		var cached []*redis.Message
+		cached, err = p.cache.GetAll(k)
+		if err != nil {
+			break
+		}
+		if originalCmds[i] == "GET" {
+			m[i] = cached[0]
+		} else {
+			m[i] = redis.NewArray(cached)
+		}
+	}
+	return m, err
 }
 
 func localSocketPathFromUpstream(upstream string, database int, prefix, suffix string) string {
@@ -314,9 +368,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 
 			if inv, ok := p.invalidators[upstream]; ok && p.cachePrefixes != nil {
 				// TODO move this into invalidator.go ? would be easy to have it generate its own tracking command
-				//CLIENT TRACKING on BCAST PREFIX <list> REDIRECT <ID>
 				cmd := []string{"CLIENT", "TRACKING", "on", "REDIRECT", redis.Itoa(inv.clientId), "BCAST"}
-				//cmd = append(cmd, "REDIRECT")
 				for _, p := range p.cachePrefixes {
 					cmd = append(cmd, "PREFIX", p)
 				}
