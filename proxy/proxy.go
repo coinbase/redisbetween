@@ -368,7 +368,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 
 			if inv, ok := p.invalidators[upstream]; ok && p.cachePrefixes != nil {
 				// TODO move this into invalidator.go ? would be easy to have it generate its own tracking command
-				cmd := []string{"CLIENT", "TRACKING", "on", "REDIRECT", redis.Itoa(inv.clientId), "BCAST"}
+				cmd := []string{"CLIENT", "TRACKING", "on", "REDIRECT", redis.Itoa(inv.clientID), "BCAST"}
 				for _, p := range p.cachePrefixes {
 					cmd = append(cmd, "PREFIX", p)
 				}

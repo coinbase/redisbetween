@@ -7,7 +7,7 @@ import (
 
 type invalidator struct {
 	conn     net.Conn
-	clientId int64
+	clientID int64
 }
 
 func newInvalidator(upstream string) (*invalidator, error) {
@@ -17,12 +17,12 @@ func newInvalidator(upstream string) (*invalidator, error) {
 	}
 
 	i := &invalidator{conn: conn}
-	err = i.getClientId()
+	err = i.getClientID()
 
 	return i, err
 }
 
-func (i *invalidator) getClientId() error {
+func (i *invalidator) getClientID() error {
 	_, err := i.conn.Write([]byte("*2\r\n$6\r\nCLIENT\r\n$2\r\nID\r\n"))
 	if err != nil {
 		return err
@@ -32,14 +32,14 @@ func (i *invalidator) getClientId() error {
 	if err != nil || !m.IsInt() {
 		return err
 	}
-	id, err := redis.Btoi64(m.Value)
-	i.clientId = id
+	id, _ := redis.Btoi64(m.Value)
+	i.clientID = id
 
 	_, err = i.conn.Write([]byte("*2\r\n$9\r\nSUBSCRIBE\r\n$20\r\n__redis__:invalidate\r\n"))
 	if err != nil {
 		return err
 	}
-	m, err = redis.Decode(i.conn)
+	_, err = redis.Decode(i.conn)
 	if err != nil {
 		return err
 	}
