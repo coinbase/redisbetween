@@ -23,11 +23,7 @@ func newInvalidator(upstream string) (*invalidator, error) {
 }
 
 func (i *invalidator) getClientID() error {
-	cmd := redis.NewArray([]*redis.Message{
-		redis.NewBulkBytes([]byte("CLIENT")),
-		redis.NewBulkBytes([]byte("ID")),
-	})
-	err := redis.Encode(i.conn, cmd)
+	err := redis.Encode(i.conn, redis.NewCommand("CLIENT", "ID"))
 	if err != nil {
 		return err
 	}
@@ -39,11 +35,7 @@ func (i *invalidator) getClientID() error {
 	id, _ := redis.Btoi64(m.Value)
 	i.clientID = id
 
-	cmd = redis.NewArray([]*redis.Message{
-		redis.NewBulkBytes([]byte("SUBSCRIBE")),
-		redis.NewBulkBytes([]byte("__redis__:invalidate")),
-	})
-	err = redis.Encode(i.conn, cmd)
+	err = redis.Encode(i.conn, redis.NewCommand("SUBSCRIBE", "__redis__:invalidate"))
 	if err != nil {
 		return err
 	}
@@ -56,18 +48,11 @@ func (i *invalidator) getClientID() error {
 }
 
 func (i *invalidator) subscribeCommand(prefixes []string) *redis.Message {
-	parts := []*redis.Message{
-		redis.NewBulkBytes([]byte("CLIENT")),
-		redis.NewBulkBytes([]byte("TRACKING")),
-		redis.NewBulkBytes([]byte("on")),
-		redis.NewBulkBytes([]byte("REDIRECT")),
-		redis.NewBulkBytes([]byte(redis.Itoa(i.clientID))),
-		redis.NewBulkBytes([]byte("BCAST")),
-	}
+	parts := []string{"CLIENT", "TRACKING", "on", "REDIRECT", redis.Itoa(i.clientID), "BCAST"}
 	for _, p := range prefixes {
-		parts = append(parts, redis.NewBulkBytes([]byte("PREFIX")), redis.NewBulkBytes([]byte(p)))
+		parts = append(parts, "PREFIX", p)
 	}
-	return redis.NewArray(parts)
+	return redis.NewCommand(parts...)
 }
 
 func (i *invalidator) run(cache *Cache) error {

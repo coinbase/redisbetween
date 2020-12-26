@@ -13,12 +13,7 @@ import (
 
 func TestValidateCommands(t *testing.T) {
 	c := connection{}
-	wm := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("GET")),
-			redis.NewBulkBytes([]byte("hi")),
-		}),
-	}
+	wm := []*redis.Message{redis.NewCommand("GET", "hi")}
 	incomingCmds, err := c.validateCommands(wm)
 	assert.NoError(t, err)
 	assert.Equal(t, []string{"GET"}, incomingCmds)
@@ -26,12 +21,7 @@ func TestValidateCommands(t *testing.T) {
 
 func TestValidateCommandsUnsupported(t *testing.T) {
 	c := connection{}
-	wm := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("SUBSCRIBE")),
-			redis.NewBulkBytes([]byte("hi")),
-		}),
-	}
+	wm := []*redis.Message{redis.NewCommand("SUBSCRIBE", "hi")}
 	_, err := c.validateCommands(wm)
 	assert.Error(t, err)
 }
@@ -39,16 +29,9 @@ func TestValidateCommandsUnsupported(t *testing.T) {
 func TestValidateCommandsClosedTransaction(t *testing.T) {
 	c := connection{}
 	wm := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("MULTI")),
-		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("GET")),
-			redis.NewBulkBytes([]byte("hi")),
-		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("EXEC")),
-		}),
+		redis.NewCommand("MULTI"),
+		redis.NewCommand("GET", "hi"),
+		redis.NewCommand("EXEC"),
 	}
 	incomingCmds, err := c.validateCommands(wm)
 	assert.NoError(t, err)
@@ -58,17 +41,9 @@ func TestValidateCommandsClosedTransaction(t *testing.T) {
 func TestValidateCommandsOpenTransaction(t *testing.T) {
 	c := connection{}
 	wm := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("WATCH")),
-			redis.NewBulkBytes([]byte("hi")),
-		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("GET")),
-			redis.NewBulkBytes([]byte("hi")),
-		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("MULTI")),
-		}),
+		redis.NewCommand("WATCH", "hi"),
+		redis.NewCommand("GET", "hi"),
+		redis.NewCommand("MULTI"),
 	}
 	incomingCmds, err := c.validateCommands(wm)
 	assert.Error(t, err)
@@ -153,15 +128,8 @@ func testReadWireMessagesHelper(t *testing.T, readMin int, checkPipelineSignals 
 
 func TestWriteWireMessagesNoPipelineWrapping(t *testing.T) {
 	commands := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("SET")),
-			redis.NewBulkBytes([]byte("hi")),
-			redis.NewBulkBytes([]byte("1")),
-		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("GET")),
-			redis.NewBulkBytes([]byte("hi")),
-		}),
+		redis.NewCommand("SET", "hi", "1"),
+		redis.NewCommand("GET", "hi"),
 	}
 	expected := []string{
 		"*3 \\r\\n $3 \\r\\n SET \\r\\n $2 \\r\\n hi \\r\\n $1 \\r\\n 1 \\r\\n ",
@@ -172,15 +140,8 @@ func TestWriteWireMessagesNoPipelineWrapping(t *testing.T) {
 
 func TestWriteWireMessagesWithPipelineWrapping(t *testing.T) {
 	commands := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("SET")),
-			redis.NewBulkBytes([]byte("hi")),
-			redis.NewBulkBytes([]byte("1")),
-		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("GET")),
-			redis.NewBulkBytes([]byte("hi")),
-		}),
+		redis.NewCommand("SET", "hi", "1"),
+		redis.NewCommand("GET", "hi"),
 	}
 	expected := []string{
 		"$-1 \\r\\n ",

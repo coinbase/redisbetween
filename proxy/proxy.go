@@ -326,10 +326,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 			// adding that connection to the pool, so its always pinned to the right db
 			if p.database > -1 {
 				d := strconv.Itoa(p.database)
-				cmd := redis.NewArray([]*redis.Message{
-					redis.NewBulkBytes([]byte("SELECT")),
-					redis.NewBulkBytes([]byte(d)),
-				})
+				cmd := redis.NewCommand("SELECT", d)
 				err = redis.Encode(conn, cmd)
 				if err != nil {
 					logWith.Error("failed to write select command", zap.Error(err))

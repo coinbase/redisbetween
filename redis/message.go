@@ -135,6 +135,15 @@ func values(mm []*Message) [][]byte {
 	return out
 }
 
+// convenience function for making commands, which are just flat arrays
+func NewCommand(parts ...string) *Message {
+	p := make([]*Message, len(parts))
+	for i, pp := range parts {
+		p[i] = NewBulkBytes([]byte(pp))
+	}
+	return NewArray(p)
+}
+
 func NewString(value []byte) *Message {
 	r := &Message{}
 	r.Type = TypeString

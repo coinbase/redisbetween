@@ -120,7 +120,7 @@ func TestInvalidatorSet(t *testing.T) {
 		{[]string{"GET", "cached:{1}ok"}, "GET cached:{1}ok: hello", 0},
 		{[]string{"GET", "cached:{1}ok"}, "GET cached:{1}ok: hello", 0},
 		{[]string{"SET", "cached:{1}ok", "new value"}, "SET cached:{1}ok new value: OK", 50},
-		{[]string{"GET", "cached:{1}ok"}, "GET cached:{1}ok: new value", 50},
+		{[]string{"GET", "cached:{1}ok"}, "GET cached:{1}ok: new value", 0},
 	}, map[string]string{
 		"cached:{1}ok": "$9\r\nnew value\r\n",
 	})
@@ -132,10 +132,10 @@ func TestInvalidatorMSet(t *testing.T) {
 		{[]string{"MGET", "cached:{1}ok", "cached:{1}second"}, "MGET cached:{1}ok cached:{1}second: [hello world]", 0},
 		{[]string{"MGET", "cached:{1}ok", "cached:{1}second"}, "MGET cached:{1}ok cached:{1}second: [hello world]", 0},
 		{[]string{"MSET", "cached:{1}ok", "new value", "cached:{1}second", "new value two"}, "MSET cached:{1}ok new value cached:{1}second new value two: OK", 50},
-		{[]string{"MGET", "cached:{1}ok", "cached:{1}second"}, "MGET cached:{1}ok cached:{1}second: [new value new value two]", 50},
+		{[]string{"MGET", "cached:{1}ok", "cached:{1}second"}, "MGET cached:{1}ok cached:{1}second: [new value new value two]", 0},
+		{[]string{"MSET", "cached:{1}other", "other", "cached:{1}second", "fresh"}, "MSET cached:{1}other other cached:{1}second fresh: OK", 50},
 	}, map[string]string{
-		"cached:{1}ok":     "$9\r\nnew value\r\n",
-		"cached:{1}second": "$13\r\nnew value two\r\n",
+		"cached:{1}ok": "$9\r\nnew value\r\n",
 	})
 }
 
