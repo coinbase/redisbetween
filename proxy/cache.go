@@ -54,6 +54,10 @@ func (c *Cache) Del(key []byte) bool {
 	return c.c.Del(key)
 }
 
+func (c *Cache) Clear() {
+	c.c.Clear()
+}
+
 func (c *Cache) set(key []byte, mm *redis.Message) {
 	b, _ := redis.EncodeToBytes(mm) // TODO log this error
 	_ = c.c.Set(key, b, 360)        // TODO make this TTL configurable, log this error

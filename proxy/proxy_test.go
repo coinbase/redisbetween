@@ -119,10 +119,16 @@ func TestInvalidatorSet(t *testing.T) {
 		{[]string{"SET", "cached:{1}ok", "hello"}, "SET cached:{1}ok hello: OK", 0},
 		{[]string{"GET", "cached:{1}ok"}, "GET cached:{1}ok: hello", 0},
 		{[]string{"GET", "cached:{1}ok"}, "GET cached:{1}ok: hello", 0},
-		{[]string{"SET", "cached:{1}ok", "new value"}, "SET cached:{1}ok new value: OK", 50},
+		{[]string{"SET", "cached:{1}ok", "new value"}, "SET cached:{1}ok new value: OK", 10},
 		{[]string{"GET", "cached:{1}ok"}, "GET cached:{1}ok: new value", 0},
+		{[]string{"SET", "cached:{2}ok", "hello"}, "SET cached:{2}ok hello: OK", 0},
+		{[]string{"GET", "cached:{2}ok"}, "GET cached:{2}ok: hello", 0},
+		{[]string{"GET", "cached:{2}ok"}, "GET cached:{2}ok: hello", 0},
+		{[]string{"SET", "cached:{2}ok", "new value"}, "SET cached:{2}ok new value: OK", 10},
+		{[]string{"GET", "cached:{2}ok"}, "GET cached:{2}ok: new value", 0},
 	}, map[string]string{
 		"cached:{1}ok": "$9\r\nnew value\r\n",
+		"cached:{2}ok": "$9\r\nnew value\r\n",
 	})
 }
 
@@ -131,9 +137,9 @@ func TestInvalidatorMSet(t *testing.T) {
 		{[]string{"MSET", "cached:{1}ok", "hello", "cached:{1}second", "world"}, "MSET cached:{1}ok hello cached:{1}second world: OK", 0},
 		{[]string{"MGET", "cached:{1}ok", "cached:{1}second"}, "MGET cached:{1}ok cached:{1}second: [hello world]", 0},
 		{[]string{"MGET", "cached:{1}ok", "cached:{1}second"}, "MGET cached:{1}ok cached:{1}second: [hello world]", 0},
-		{[]string{"MSET", "cached:{1}ok", "new value", "cached:{1}second", "new value two"}, "MSET cached:{1}ok new value cached:{1}second new value two: OK", 50},
+		{[]string{"MSET", "cached:{1}ok", "new value", "cached:{1}second", "new value two"}, "MSET cached:{1}ok new value cached:{1}second new value two: OK", 10},
 		{[]string{"MGET", "cached:{1}ok", "cached:{1}second"}, "MGET cached:{1}ok cached:{1}second: [new value new value two]", 0},
-		{[]string{"MSET", "cached:{1}other", "other", "cached:{1}second", "fresh"}, "MSET cached:{1}other other cached:{1}second fresh: OK", 50},
+		{[]string{"MSET", "cached:{1}other", "other", "cached:{1}second", "fresh"}, "MSET cached:{1}other other cached:{1}second fresh: OK", 10},
 	}, map[string]string{
 		"cached:{1}ok": "$9\r\nnew value\r\n",
 	})
@@ -144,7 +150,7 @@ func TestInvalidatorCombined(t *testing.T) {
 		{[]string{"MSET", "cached:{1}combined1", "hello", "cached:{1}combined2", "world"}, "MSET cached:{1}combined1 hello cached:{1}combined2 world: OK", 0},
 		{[]string{"MGET", "cached:{1}combined1", "cached:{1}combined2"}, "MGET cached:{1}combined1 cached:{1}combined2: [hello world]", 0},
 		{[]string{"GET", "cached:{1}combined1"}, "GET cached:{1}combined1: hello", 0},
-		{[]string{"SET", "cached:{1}combined2", "goodbye"}, "SET cached:{1}combined2 goodbye: OK", 50},
+		{[]string{"SET", "cached:{1}combined2", "goodbye"}, "SET cached:{1}combined2 goodbye: OK", 10},
 		{[]string{"GET", "cached:{1}combined1"}, "GET cached:{1}combined1: hello", 0},
 		{[]string{"GET", "cached:{1}combined2"}, "GET cached:{1}combined2: goodbye", 0},
 	}, map[string]string{
@@ -261,7 +267,7 @@ func setupProxy(t *testing.T, upstreamPort string, db int, cachePrefixes []strin
 func setupStandaloneClient(t *testing.T, address string) *redis.Client {
 	t.Helper()
 	client := redis.NewClient(&redis.Options{Network: "unix", Addr: address, MaxRetries: 1})
-	res := client.Do(context.Background(), "ping")
+	res := client.Do(context.Background(), "ping", "setupStandaloneClient")
 	if res.Err() != nil {
 		_ = client.Close()
 		// Use t.Fatalf instead of assert because we want to fail fast if the cluster is down.
@@ -289,7 +295,7 @@ func setupClusterClient(t *testing.T, address string) *redis.ClusterClient {
 		MaxRetries: 1,
 	}
 	client := redis.NewClusterClient(opt)
-	res := client.Do(context.Background(), "ping")
+	res := client.Do(context.Background(), "ping", "setupClusterClient")
 	if res.Err() != nil {
 		_ = client.Close()
 		// Use t.Fatalf instead of assert because we want to fail fast if the cluster is down.

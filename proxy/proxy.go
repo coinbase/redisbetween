@@ -55,7 +55,7 @@ type Proxy struct {
 	listenerLock sync.Mutex
 	listenerWg   sync.WaitGroup
 
-	invalidators  map[string]*invalidator
+	invalidators  map[string]*Invalidator
 	invalidatorWg sync.WaitGroup
 	cache         *Cache
 }
@@ -88,7 +88,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		kill: make(chan interface{}),
 
 		listeners:    make(map[string]*listener.Listener),
-		invalidators: make(map[string]*invalidator),
+		invalidators: make(map[string]*Invalidator),
 		cache:        NewCache(),
 	}, nil
 }
@@ -106,6 +106,12 @@ func (p *Proxy) Shutdown() {
 		l.Shutdown()
 	}
 	p.listenerLock.Unlock()
+	for _, i := range p.invalidators {
+		err := i.Shutdown()
+		if err != nil {
+			p.log.Error("error closing Invalidator", zap.Error(err))
+		}
+	}
 	close(p.quit)
 }
 
@@ -170,14 +176,11 @@ func (p *Proxy) runListener(l *listener.Listener) {
 	}()
 }
 
-func (p *Proxy) runInvalidator(i *invalidator) {
+func (p *Proxy) runInvalidator(i *Invalidator) {
 	p.invalidatorWg.Add(1)
 	go func() {
 		defer p.invalidatorWg.Done()
-		err := i.run(p.cache)
-		if err != nil {
-			p.log.Error("Error", zap.Error(err))
-		}
+		i.Run(p.cache)
 	}()
 }
 
@@ -343,14 +346,14 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 			// if any cachePrefixes have been specified, we need an extra connection to
 			// listen for invalidation events from the upstream
 			if p.cachePrefixes != nil {
-				p.log.Info("creating invalidator", zap.String("upstream", upstream))
-				inv, err := newInvalidator(upstream)
+				p.log.Info("creating Invalidator", zap.String("upstream", upstream))
+				inv, err := NewInvalidator(upstream, InvalidatorLogger(logWith))
 				if err != nil {
-					logWith.Error("unable to create invalidator", zap.Error(err))
+					logWith.Error("unable to create Invalidator", zap.Error(err))
 				}
 				p.invalidators[upstream] = inv
 				p.runInvalidator(inv)
-				cmd := inv.subscribeCommand(p.cachePrefixes)
+				cmd := inv.SubscribeCommand(p.cachePrefixes)
 				err = redis.Encode(conn, cmd)
 				if err != nil {
 					logWith.Error("failed to write CLIENT TRACKING command", zap.Error(err), zap.String("command", cmd.String()))

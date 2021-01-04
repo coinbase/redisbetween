@@ -7,11 +7,13 @@ require (
 	github.com/DataDog/datadog-go v4.2.0+incompatible
 	github.com/coinbase/mongobetween v0.0.9
 	github.com/coocood/freecache v1.1.1
+	github.com/go-delve/delve v1.5.1 // indirect
 	github.com/go-redis/redis/v8 v8.4.2
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mediocregopher/radix/v3 v3.6.0
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/stretchr/testify v1.6.1
+	go.uber.org/atomic v1.7.0
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/sync v0.0.0-20201207232520-09787c993a3a // indirect
