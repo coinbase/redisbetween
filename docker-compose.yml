@@ -1,0 +1,38 @@
+version: '3'
+
+services:
+  redis-cluster:
+    image: 'grokzen/redis-cluster:6.0.9'
+    environment:
+      IP: 0.0.0.0
+      SENTINEL: 'false'
+      STANDALONE: '1'
+      SLAVES_PER_MASTER: '3'
+    hostname: server
+    ports:
+      - '7000-7050:7000-7050'
+
+  redis-monitor:
+    image: 'redis'
+    command: 'redis-cli -p 7000 -h redis-cluster monitor'
+    restart: always
+  redis-monitor2:
+    image: 'redis'
+    command: 'redis-cli -p 7001 -h redis-cluster monitor'
+    restart: always
+  redis-monitor3:
+    image: 'redis'
+    command: 'redis-cli -p 7002 -h redis-cluster monitor'
+    restart: always
+  redis-monitor4:
+    image: 'redis'
+    command: 'redis-cli -p 7003 -h redis-cluster monitor'
+    restart: always
+  redis-monitor5:
+    image: 'redis'
+    command: 'redis-cli -p 7004 -h redis-cluster monitor'
+    restart: always
+  redis-monitor6:
+    image: 'redis'
+    command: 'redis-cli -p 7005 -h redis-cluster monitor'
+    restart: always

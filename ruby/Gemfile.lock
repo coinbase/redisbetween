@@ -1,0 +1,38 @@
+PATH
+  remote: .
+  specs:
+    redisbetween (0.1.0)
+      redis
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    diff-lcs (1.3)
+    rake (12.3.3)
+    redis (4.2.5)
+    rspec (3.5.0)
+      rspec-core (~> 3.5.0)
+      rspec-expectations (~> 3.5.0)
+      rspec-mocks (~> 3.5.0)
+    rspec-core (3.5.4)
+      rspec-support (~> 3.5.0)
+    rspec-expectations (3.5.0)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.5.0)
+    rspec-mocks (3.5.0)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.5.0)
+    rspec-support (3.5.0)
+
+PLATFORMS
+  ruby
+  x86_64-darwin-19
+  x86_64-linux
+
+DEPENDENCIES
+  rake (~> 12.0)
+  redisbetween!
+  rspec (~> 3.0)
+
+BUNDLED WITH
+   2.2.2
