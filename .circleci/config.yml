@@ -1,0 +1,68 @@
+
+version: 2
+jobs:
+  lint:
+    docker:
+      - image: circleci/golang:1.14
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-pkg-cache
+      - run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/fc0a898a6ae297c0ef59e2f1d824713d6f1cd222/install.sh | sh -s -- -d -b $(go env GOPATH)/bin v1.27.0
+      - run: golangci-lint --version
+      - run: make lint
+      - save_cache:
+          key: v1-pkg-cache
+          paths:
+            - /go/pkg
+
+  ruby-tests:
+    docker:
+      - image: cimg/ruby:2.7.1
+      - image: grokzen/redis-cluster:6.0.9
+        environment:
+          SENTINEL: 'false'
+          STANDALONE: '1'
+        ports:
+          - '7000-7050:7000-7050'
+    steps:
+      - checkout
+      - run: cd ruby
+      - run: bundle check --path=tmp/bundle/ruby-2.7.1 || bundle install --jobs=4 --retry=10
+      - run: bundle exec rspec
+
+  go-tests:
+    docker:
+      - image: circleci/golang:1.14
+      - image: grokzen/redis-cluster:6.0.9
+        environment:
+          SENTINEL: 'false'
+          STANDALONE: '1'
+        ports:
+          - '7000-7050:7000-7050'
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-pkg-cache
+      - run: make test
+      - save_cache:
+          key: v1-pkg-cache
+          paths:
+            - /go/pkg
+
+  salus:
+    machine: true
+    steps:
+      - checkout
+      - run: docker run -t -v $(pwd):/home/repo coinbase/salus
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - go-tests
+      - ruby-tests
+      - lint
+      - salus
