@@ -6,16 +6,9 @@ jobs:
       - image: cimg/go:1.16
     steps:
       - checkout
-      - restore_cache:
-          keys:
-            - v1-pkg-cache
       - run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/fc0a898a6ae297c0ef59e2f1d824713d6f1cd222/install.sh | sh -s -- -d -b $(go env GOPATH)/bin v1.27.0
       - run: golangci-lint --version
       - run: make lint
-      - save_cache:
-          key: v1-pkg-cache
-          paths:
-            - /go/pkg
 
   ruby-tests:
     docker:
@@ -61,14 +54,7 @@ jobs:
       REDIS_HOST: redis-cluster
     steps:
       - checkout
-      - restore_cache:
-          keys:
-            - v1-pkg-cache
       - run: make test
-      - save_cache:
-          key: v1-pkg-cache
-          paths:
-            - /go/pkg
 
   salus:
     machine: true
