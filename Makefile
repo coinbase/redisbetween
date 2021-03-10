@@ -12,11 +12,11 @@ test:
 lint:
 	GOGC=75 golangci-lint run --timeout 10m --concurrency 32 -v -E golint ./...
 
-ruby-test: build
-	make proxy-test & cd ruby; rake; kill "$$!"
+ruby-test:
+	cd ruby; rake
 
 ruby-setup:
 	cd ruby; bin/setup
 
-proxy-test:
-	bin/redisbetween -unlink -network unix -loglevel debug redis://127.0.0.1:7000?label=cluster redis://127.0.0.1:7006?label=standalone
+proxy-test: build
+	bin/redisbetween -unlink -network unix -loglevel debug redis://$$REDIS_HOST:7000?label=cluster redis://$$REDIS_HOST:7006?label=standalone

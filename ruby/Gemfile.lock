@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    redisbetween (0.1.0)
+    redisbetween (0.1.2)
       redis
 
 GEM
@@ -35,4 +35,4 @@ DEPENDENCIES
   rspec (~> 3.0)
 
 BUNDLED WITH
-   2.2.2
+   2.2.14

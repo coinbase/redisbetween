@@ -1,6 +1,7 @@
 require 'redisbetween/version'
 require 'redis'
 require 'uri'
+require 'set'
 
 module Redisbetween
   class Error < StandardError; end
@@ -38,7 +39,7 @@ module Redisbetween
       super(options)
     end
 
-    UNSUPPORTED_COMMANDS = [
+    UNSUPPORTED_COMMANDS = Set.new([
       :auth,
       :blpop,
       :brpop,
@@ -53,7 +54,7 @@ module Redisbetween
       :wait,
       :xread,
       :xreadgroup,
-    ].to_set.freeze
+    ])
 
     def process(commands)
       @handle_unsupported_redisbetween_command&.call("multi without a block") if commands == [[:multi]]

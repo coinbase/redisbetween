@@ -3,7 +3,7 @@ version: 2
 jobs:
   lint:
     docker:
-      - image: circleci/golang:1.14
+      - image: cimg/go:1.16
     steps:
       - checkout
       - restore_cache:
@@ -21,26 +21,44 @@ jobs:
     docker:
       - image: cimg/ruby:2.7.1
       - image: grokzen/redis-cluster:6.0.9
+        name: redis-cluster
         environment:
           SENTINEL: 'false'
           STANDALONE: '1'
-        ports:
-          - '7000-7050:7000-7050'
+    environment:
+      GOLANG_DOWNLOAD_URL: https://golang.org/dl/go1.16.linux-amd64.tar.gz
+      GOLANG_DOWNLOAD_SHA256: 013a489ebb3e24ef3d915abe5b94c3286c070dfe0818d5bca8108f1d6e8440d2
+      GOPATH: /go
+      REDIS_HOST: redis-cluster
     steps:
       - checkout
-      - run: cd ruby
-      - run: bundle check --path=tmp/bundle/ruby-2.7.1 || bundle install --jobs=4 --retry=10
-      - run: bundle exec rspec
+      - run:
+          name: install go
+          command: |
+              curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
+                && echo "$GOLANG_DOWNLOAD_SHA256  golang.tar.gz" | sha256sum -c - \
+                && sudo tar -C /usr/local -xzf golang.tar.gz \
+                && rm golang.tar.gz
+              sudo mkdir -p "$GOPATH/src" "$GOPATH/bin" && sudo chmod -R 777 "$GOPATH"
+      - run:
+          name: tests
+          command: |
+            export PATH=$GOPATH/bin:/usr/local/go/bin:$PATH
+            make build
+            make proxy-test &
+            make ruby-setup ruby-test
+            kill $!
 
   go-tests:
     docker:
-      - image: circleci/golang:1.14
+      - image: cimg/go:1.16
       - image: grokzen/redis-cluster:6.0.9
+        name: redis-cluster
         environment:
           SENTINEL: 'false'
           STANDALONE: '1'
-        ports:
-          - '7000-7050:7000-7050'
+    environment:
+      REDIS_HOST: redis-cluster
     steps:
       - checkout
       - restore_cache:
