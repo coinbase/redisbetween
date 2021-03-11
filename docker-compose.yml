@@ -7,7 +7,6 @@ services:
       IP: 0.0.0.0
       SENTINEL: 'false'
       STANDALONE: '1'
-      SLAVES_PER_MASTER: '3'
     hostname: server
     ports:
       - '7000-7050:7000-7050'

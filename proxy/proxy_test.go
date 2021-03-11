@@ -2,9 +2,9 @@ package proxy
 
 import (
 	"context"
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/handlers"
-	"github.com/DataDog/datadog-go/statsd"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
@@ -20,10 +20,18 @@ import (
 // assumes a redis cluster running with 6 nodes on 127.0.0.1 ports 7000-7005, and
 // a standalone redis on port 7006. see docker-compose.yml
 
+func redisHost() string {
+	h := os.Getenv("REDIS_HOST")
+	if h != "" {
+		return h
+	}
+	return "127.0.0.1"
+}
+
 func TestProxy(t *testing.T) {
 	sd := setupProxy(t, "7006", -1)
 
-	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006.sock")
+	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
 	assert.NoError(t, res.Err())
 	res = client.Do(context.Background(), "set", "hello", "world")
@@ -44,7 +52,7 @@ type command struct {
 
 func TestIntegrationCommands(t *testing.T) {
 	shutdownProxy := setupProxy(t, "7000", -1)
-	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-127.0.0.1-7000.sock")
+	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7000.sock")
 	var i int
 	var wg sync.WaitGroup
 	for {
@@ -74,7 +82,7 @@ func TestIntegrationCommands(t *testing.T) {
 
 func TestPipelinedCommands(t *testing.T) {
 	shutdownProxy := setupProxy(t, "7006", 3)
-	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
+	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006-3.sock")
 	var i int
 	var wg sync.WaitGroup
 	for {
@@ -107,7 +115,7 @@ func TestPipelinedCommands(t *testing.T) {
 
 func TestDbSelectCommand(t *testing.T) {
 	shutdown := setupProxy(t, "7006", 3)
-	client := setupStandaloneClient(t, "/var/tmp/redisbetween-127.0.0.1-7006-3.sock")
+	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006-3.sock")
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
 	assert.Contains(t, res.String(), "db=3")
@@ -154,10 +162,7 @@ func assertResponsePipelined(t *testing.T, cmds []command, c *redis.Client) {
 func setupProxy(t *testing.T, upstreamPort string, db int) func() {
 	t.Helper()
 
-	uri := "127.0.0.1:" + upstreamPort
-	if os.Getenv("CI") == "true" {
-		uri = "redis:" + upstreamPort
-	}
+	uri := redisHost() + ":" + upstreamPort
 
 	sd, err := statsd.New("localhost:8125")
 	assert.NoError(t, err)
