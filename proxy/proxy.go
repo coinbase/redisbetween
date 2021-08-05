@@ -246,33 +246,6 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sdWith) }),
 	}
 
-	if p.database > -1 {
-		co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
-			return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
-				dlr := &net.Dialer{Timeout: 30 * time.Second}
-				conn, err := dlr.DialContext(ctx, network, address)
-				if err != nil {
-					return conn, err
-				}
-				d := strconv.Itoa(p.database)
-				_, err = conn.Write([]byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n"))
-				if err != nil {
-					logWith.Error("failed to write select command", zap.Error(err))
-					return conn, err
-				}
-				res := make([]byte, 5)
-				_, err = io.ReadFull(conn, res)
-				if err != nil || string(res) != "+OK\r\n" {
-					logWith.Error("failed to read select response", zap.Error(err), zap.String("response", string(res)))
-				}
-				return conn, err
-			})
-		})
-		opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
-			return append(cos, co)
-		}))
-	}
-
 	var initCommand []byte
 
 	// if a db number has been specified, we need to issue a SELECT command before adding
