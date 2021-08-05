@@ -81,7 +81,6 @@ func run(log *zap.Logger, cfg *config.Config) error {
 	}
 	shutdownOnSignal(log, shutdown, kill)
 
-	log.Info("Hi")
 	log.Info("Running")
 
 	return nil

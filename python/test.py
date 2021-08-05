@@ -30,7 +30,6 @@ class RedisbetweenReadOnlyNodeManager(NodeManager):
 
 class RedisbetweenReadonlyClusterConnection(UnixDomainSocketConnection):
     def __init__(self, *args, **kwargs):
-        # kwargs.pop("readonly")
         host, port, path = (
             kwargs.pop("host", "localhost"),
             kwargs.pop("port", 6379),
