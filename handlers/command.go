@@ -96,6 +96,12 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		return l, err
 	}
 
+	str := make([]string, 0)
+	for _, m := range wm {
+		str = append(str, m.String())
+	}
+	c.log.Info("incomingCmds", zap.Strings("commands", incomingCmds), zap.Strings("msg", str))
+
 	if wm, l, err = c.roundTrip(wm); err != nil {
 		return l, err
 	}

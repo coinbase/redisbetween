@@ -29,7 +29,7 @@ func redisHost() string {
 }
 
 func TestProxy(t *testing.T) {
-	sd := setupProxy(t, "7006", -1)
+	sd := setupProxy(t, "7006", -1, false)
 
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
@@ -51,8 +51,8 @@ type command struct {
 }
 
 func TestIntegrationCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7000", -1)
-	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7000.sock")
+	shutdownProxy := setupProxy(t, "7000", -1, false)
+	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7000.sock", false)
 	var i int
 	var wg sync.WaitGroup
 	for {
@@ -81,7 +81,7 @@ func TestIntegrationCommands(t *testing.T) {
 }
 
 func TestPipelinedCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7006", 3)
+	shutdownProxy := setupProxy(t, "7006", 3, false)
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006-3.sock")
 	var i int
 	var wg sync.WaitGroup
@@ -114,7 +114,7 @@ func TestPipelinedCommands(t *testing.T) {
 }
 
 func TestDbSelectCommand(t *testing.T) {
-	shutdown := setupProxy(t, "7006", 3)
+	shutdown := setupProxy(t, "7006", 3, false)
 	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006-3.sock")
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
@@ -122,10 +122,20 @@ func TestDbSelectCommand(t *testing.T) {
 	shutdown()
 }
 
+func TestReadonlyCommand(t *testing.T) {
+	shutdown := setupProxy(t, "7000", -1, true)
+	client := setupClusterClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7000-ro.sock", true)
+	res := client.Do(context.Background(), "CLIENT", "LIST")
+	assert.NoError(t, res.Err())
+	assert.Contains(t, res.String(), "flags=r")
+	shutdown()
+}
+
 func TestLocalSocketPathFromUpstream(t *testing.T) {
-	assert.Equal(t, "prefix-with.host-colon.suffix", localSocketPathFromUpstream("with.host:colon", -1, "prefix-", ".suffix"))
-	assert.Equal(t, "prefix-withoutcolon.host.suffix", localSocketPathFromUpstream("withoutcolon.host", -1, "prefix-", ".suffix"))
-	assert.Equal(t, "prefix-with.host-db-1.suffix", localSocketPathFromUpstream("with.host:db", 1, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-with.host-colon.suffix", localSocketPathFromUpstream("with.host:colon", -1, false, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-withoutcolon.host.suffix", localSocketPathFromUpstream("withoutcolon.host", -1, false, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-with.host-db-1.suffix", localSocketPathFromUpstream("with.host:db", 1, false, "prefix-", ".suffix"))
+	assert.Equal(t, "prefix-with.host-db-ro.suffix", localSocketPathFromUpstream("with.host:db", -1, true, "prefix-", ".suffix"))
 }
 
 func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {
@@ -159,7 +169,7 @@ func assertResponsePipelined(t *testing.T, cmds []command, c *redis.Client) {
 	assert.Equal(t, expected, actualStrings)
 }
 
-func setupProxy(t *testing.T, upstreamPort string, db int) func() {
+func setupProxy(t *testing.T, upstreamPort string, db int, readonly bool) func() {
 	t.Helper()
 
 	uri := redisHost() + ":" + upstreamPort
@@ -174,7 +184,7 @@ func setupProxy(t *testing.T, upstreamPort string, db int) func() {
 		Unlink:            true,
 	}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, 1, 1*time.Second, 1*time.Second)
+	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, 1, 1*time.Second, 1*time.Second, readonly)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run()
@@ -200,7 +210,7 @@ func setupStandaloneClient(t *testing.T, address string) *redis.Client {
 	return client
 }
 
-func setupClusterClient(t *testing.T, address string) *redis.ClusterClient {
+func setupClusterClient(t *testing.T, address string, readonly bool) *redis.ClusterClient {
 	t.Helper()
 	opt := &redis.ClusterOptions{
 		Addrs: []string{address},
@@ -211,7 +221,11 @@ func setupClusterClient(t *testing.T, address string) *redis.ClusterClient {
 				if err != nil {
 					return nil, err
 				}
-				addr = "/var/tmp/redisbetween-" + host + "-" + port + ".sock"
+				addr = "/var/tmp/redisbetween-" + host + "-" + port
+				if readonly {
+					addr += "-ro"
+				}
+				addr += ".sock"
 				network = "unix"
 			}
 			return net.Dial(network, addr)

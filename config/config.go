@@ -38,6 +38,7 @@ type Upstream struct {
 	Database           int
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
+	Readonly           bool
 }
 
 func ParseFlags() *Config {
@@ -135,6 +136,7 @@ func parseFlags() (*Config, error) {
 				Database:           db,
 				ReadTimeout:        rt,
 				WriteTimeout:       wt,
+				Readonly:           getBoolParam(params, "readonly"),
 			}
 
 			upstreams = append(upstreams, us)
@@ -148,6 +150,9 @@ func parseFlags() (*Config, error) {
 	addrMap := make(map[string]bool)
 	for _, c := range upstreams {
 		key := c.UpstreamConfigHost + "/" + strconv.Itoa(c.Database)
+		if c.Readonly {
+			key += "-readonly"
+		}
 		_, ok := addrMap[key]
 		if ok {
 			return nil, fmt.Errorf("duplicate entry for address: %v", c.UpstreamConfigHost)
@@ -185,4 +190,9 @@ func getIntParam(v url.Values, key string, def int) int {
 		return def
 	}
 	return i
+}
+
+func getBoolParam(v url.Values, key string) bool {
+	val := getStringParam(v, key, "false")
+	return val == "true"
 }

@@ -41,7 +41,7 @@ Applications running on the same host can connect to redis via this unix socket 
 redis server, thus sharing a relatively smaller number of connections among the many processes on a machine.
 
 Upon startup, redisbetween creates a pool of connections to the redis endpoint provided and listens on a unix socket
-named after the endpoint. By default, it will be named `/var/tmp/redisbetween-${host}-${port}(-${db}).sock`. This can be
+named after the endpoint. By default, it will be named `/var/tmp/redisbetween-${host}-${port}(-${db})(-ro).sock`. This can be
 customized using the `-localsocketprefix` and `-localsocketsuffix` options. For standalone redis deployments, this will
 be the only socket created. However, redisbetween will inspect responses to `CLUSTER` commands, looking for references to
 cluster members that it hasn't yet seen. When it sees a new cluster member, it allocates a new connection pool and unix
@@ -56,6 +56,7 @@ Here's an example of a patch to the go-redis client. Note that this one does not
 not supported by redis cluster anyway.
 
 ```go
+readonly := true
 opt := &redis.ClusterOptions{
     Addrs: []string{address},
     Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -64,7 +65,11 @@ opt := &redis.ClusterOptions{
             if err != nil {
                 return nil, err
             }
-            addr = "/var/tmp/redisbetween-" + host + "-" + port + ".sock"
+            addr = "/var/tmp/redisbetween-" + host + "-" + port
+            if readonly {
+                addr += "-ro"
+            }
+            addr += ".sock"
             network = "unix"
         }
         return net.Dial(network, addr)
@@ -105,3 +110,4 @@ Each URI can specify the following settings as GET params:
 - `label` optionally tags events and metrics for proxy activity on this host or cluster. Defaults to `""` (disabled)
 - `readtimeout` timeout for reads to this upstream. Defaults to 5s
 - `writetimeout` timeout for writes to this upstream. Defaults to 5s
+- `readonly` every connection issues a [READONLY](https://redis.io/commands/readonly) command before entering the pool. Defaults to false
