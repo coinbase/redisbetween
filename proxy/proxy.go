@@ -248,17 +248,20 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 
 	var initCommand []byte
 
-	// if a db number has been specified, we need to issue a SELECT command before adding
-	// that connection to the pool, so it's always pinned to the right db
 	if p.database > -1 {
+		// if a db number has been specified, we need to issue a SELECT command before adding
+		// that connection to the pool, so it's always pinned to the right db
 		d := strconv.Itoa(p.database)
 		initCommand = []byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n")
 	} else if p.readonly {
+		// if this pool is designated for replica reads, we need to set the READONLY flag on
+		// the upstream connection before adding it to the pool. this is only supported by
+		// clustered redis, so it cannot be combined with SELECT.
 		initCommand = []byte("*1\r\n$8\r\nREADONLY\r\n")
 	}
 
 	if initCommand != nil {
-		co := connectWithLeadingCommand(initCommand, logWith)
+		co := connectWithInitCommand(initCommand, logWith)
 		opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
 			return append(cos, co)
 		}))
@@ -281,7 +284,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, shutdownHandler)
 }
 
-func connectWithLeadingCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
+func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
 	co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
 		return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
 			dlr := &net.Dialer{Timeout: 30 * time.Second}

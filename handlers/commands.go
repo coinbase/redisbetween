@@ -34,7 +34,7 @@ const (
 var TransactionCommands = map[string]int{
 	// redis transactions are stateful on the server side, and are associated with
 	// the connection, so we can only allow them within a set of pipelined commands.
-	// this map helps us keep track whether or not we are inside a transaction.
+	// this map helps us keep track of whether we are inside a transaction.
 	"DISCARD": TransactionClose,
 	"EXEC":    TransactionClose,
 	"MULTI":   TransactionOpen,
