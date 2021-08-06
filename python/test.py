@@ -78,7 +78,6 @@ class RedisbetweenClusterWithReadReplicasConnectionPool(ClusterWithReadReplicasC
 
 
 redis_client = RedisCluster(
-    readonly_mode=True,
     read_from_replicas=True,
     connection_pool=RedisbetweenClusterWithReadReplicasConnectionPool(
         startup_nodes=[{"host": "127.0.0.1", "port": 7000}],
