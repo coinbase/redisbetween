@@ -15,23 +15,35 @@ services:
     image: 'redis'
     command: 'redis-cli -p 7000 -h redis-cluster monitor'
     restart: always
+    depends_on:
+      - redis-cluster
   redis-monitor2:
     image: 'redis'
     command: 'redis-cli -p 7001 -h redis-cluster monitor'
     restart: always
+    depends_on:
+      - redis-cluster
   redis-monitor3:
     image: 'redis'
     command: 'redis-cli -p 7002 -h redis-cluster monitor'
     restart: always
+    depends_on:
+      - redis-cluster
   redis-monitor4:
     image: 'redis'
     command: 'redis-cli -p 7003 -h redis-cluster monitor'
     restart: always
+    depends_on:
+      - redis-cluster
   redis-monitor5:
     image: 'redis'
     command: 'redis-cli -p 7004 -h redis-cluster monitor'
     restart: always
+    depends_on:
+      - redis-cluster
   redis-monitor6:
     image: 'redis'
     command: 'redis-cli -p 7005 -h redis-cluster monitor'
     restart: always
+    depends_on:
+      - redis-cluster
