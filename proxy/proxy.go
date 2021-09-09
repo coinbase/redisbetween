@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"github.com/coinbase/memcachedbetween/listener"
 	"github.com/coinbase/memcachedbetween/pool"
+	"github.com/coinbase/mongobetween/util"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/handlers"
 	"github.com/coinbase/redisbetween/redis"
-	"github.com/coinbase/mongobetween/util"
 	"github.com/mediocregopher/radix/v3"
 	"io"
 	"net"
@@ -41,6 +41,7 @@ type Proxy struct {
 	readTimeout        time.Duration
 	writeTimeout       time.Duration
 	database           int
+	readonly           bool
 
 	quit chan interface{}
 	kill chan interface{}
@@ -50,7 +51,7 @@ type Proxy struct {
 	listenerWg   sync.WaitGroup
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -66,12 +67,13 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		config: config,
 
 		upstreamConfigHost: upstreamHost,
-		localConfigHost:    localSocketPathFromUpstream(upstreamHost, database, config.LocalSocketPrefix, config.LocalSocketSuffix),
+		localConfigHost:    localSocketPathFromUpstream(upstreamHost, database, readonly, config.LocalSocketPrefix, config.LocalSocketSuffix),
 		minPoolSize:        minPoolSize,
 		maxPoolSize:        maxPoolSize,
 		readTimeout:        readTimeout,
 		writeTimeout:       writeTimeout,
 		database:           database,
+		readonly:           readonly,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -204,10 +206,13 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 	}
 }
 
-func localSocketPathFromUpstream(upstream string, database int, prefix, suffix string) string {
+func localSocketPathFromUpstream(upstream string, database int, readonly bool, prefix, suffix string) string {
 	path := prefix + strings.Replace(upstream, ":", "-", -1)
 	if database > -1 {
 		path += "-" + strconv.Itoa(database)
+	}
+	if readonly {
+		path += "-ro"
 	}
 	return path + suffix
 }
@@ -218,7 +223,7 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 	defer p.listenerLock.Unlock()
 	_, ok := p.listeners[upstream]
 	if !ok {
-		local := localSocketPathFromUpstream(upstream, p.database, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+		local := localSocketPathFromUpstream(upstream, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
 		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local), zap.String("command", originalCmd))
 		l, err := p.createListener(local, upstream)
 		if err != nil {
@@ -241,30 +246,22 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sdWith) }),
 	}
 
-	// if a db number has been specified, we need to issue a SELECT command before adding
-	// that connection to the pool, so its always pinned to the right db
+	var initCommand []byte
+
 	if p.database > -1 {
-		co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
-			return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
-				dlr := &net.Dialer{Timeout: 30 * time.Second}
-				conn, err := dlr.DialContext(ctx, network, address)
-				if err != nil {
-					return conn, err
-				}
-				d := strconv.Itoa(p.database)
-				_, err = conn.Write([]byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n"))
-				if err != nil {
-					logWith.Error("failed to write select command", zap.Error(err))
-					return conn, err
-				}
-				res := make([]byte, 5)
-				_, err = io.ReadFull(conn, res)
-				if err != nil || string(res) != "+OK\r\n" {
-					logWith.Error("failed to read select response", zap.Error(err), zap.String("response", string(res)))
-				}
-				return conn, err
-			})
-		})
+		// if a db number has been specified, we need to issue a SELECT command before adding
+		// that connection to the pool, so it's always pinned to the right db
+		d := strconv.Itoa(p.database)
+		initCommand = []byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n")
+	} else if p.readonly {
+		// if this pool is designated for replica reads, we need to set the READONLY flag on
+		// the upstream connection before adding it to the pool. this is only supported by
+		// clustered redis, so it cannot be combined with SELECT.
+		initCommand = []byte("*1\r\n$8\r\nREADONLY\r\n")
+	}
+
+	if initCommand != nil {
+		co := connectWithInitCommand(initCommand, logWith)
 		opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
 			return append(cos, co)
 		}))
@@ -285,6 +282,31 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	}
 
 	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, shutdownHandler)
+}
+
+func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
+	co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
+		return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
+			dlr := &net.Dialer{Timeout: 30 * time.Second}
+			conn, err := dlr.DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			_, err = conn.Write(command)
+			if err != nil {
+				logWith.Error("failed to write command", zap.Error(err))
+				return nil, err
+			}
+			res := make([]byte, 5)
+			_, err = io.ReadFull(conn, res)
+			if err != nil || string(res) != "+OK\r\n" {
+				logWith.Error("failed to read response", zap.Error(err), zap.String("response", string(res)))
+				return nil, err
+			}
+			return conn, err
+		})
+	})
+	return co
 }
 
 func poolMonitor(sd *statsd.Client) *pool.Monitor {

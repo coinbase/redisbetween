@@ -19,4 +19,4 @@ ruby-setup:
 	cd ruby; bin/setup
 
 proxy-test: build
-	bin/redisbetween -unlink -network unix -loglevel debug redis://$$REDIS_HOST:7000?label=cluster redis://$$REDIS_HOST:7006?label=standalone
+	bin/redisbetween -unlink -network unix -loglevel debug redis://$$REDIS_HOST:7000?readonly=true redis://$$REDIS_HOST:7000?label=cluster redis://$$REDIS_HOST:7006?label=standalone

@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/coinbase/redisbetween/proxy"
 	"github.com/DataDog/datadog-go/statsd"
+	"github.com/coinbase/redisbetween/proxy"
 	"go.uber.org/zap/zapcore"
 	"os"
 	"os/signal"
@@ -92,7 +92,7 @@ func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err err
 		return nil, err
 	}
 	for _, u := range c.Upstreams {
-		p, err := proxy.NewProxy(log, s, c, u.Label, u.UpstreamConfigHost, u.Database, u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout)
+		p, err := proxy.NewProxy(log, s, c, u.Label, u.UpstreamConfigHost, u.Database, u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout, u.Readonly)
 		if err != nil {
 			return nil, err
 		}
