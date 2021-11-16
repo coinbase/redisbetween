@@ -4,7 +4,7 @@ go 1.13
 
 require (
 	github.com/DataDog/datadog-go v4.2.0+incompatible
-	github.com/coinbase/memcachedbetween v0.0.0-20210208182627-c6a33d9805d2
+	github.com/coinbase/memcachedbetween v0.0.0-20211102164832-e9f6e7c6d80e
 	github.com/coinbase/mongobetween v0.0.9
 	github.com/go-redis/redis/v8 v8.4.2
 	github.com/kr/text v0.2.0 // indirect
