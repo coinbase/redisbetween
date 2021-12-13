@@ -1,9 +1,10 @@
 package handlers
 
 import (
+	"testing"
+
 	"github.com/coinbase/redisbetween/redis"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestValidateCommands(t *testing.T) {
@@ -23,7 +24,7 @@ func TestValidateCommandsUnsupported(t *testing.T) {
 	c := connection{}
 	wm := []*redis.Message{
 		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("SUBSCRIBE")),
+			redis.NewBulkBytes([]byte("BRPOP")),
 			redis.NewBulkBytes([]byte("hi")),
 		}),
 	}
@@ -68,4 +69,14 @@ func TestValidateCommandsOpenTransaction(t *testing.T) {
 	incomingCmds, err := c.validateCommands(wm)
 	assert.Error(t, err)
 	assert.Equal(t, []string{"WATCH", "GET", "MULTI"}, incomingCmds)
+}
+
+func TestConnectionClose(t *testing.T) {
+	conns, _, _, _, _ := createConnectionMocks(t, 1)
+	c := conns[0]
+
+	err := c.Close()
+	assert.NoError(t, err)
+	assert.True(t, c.isClosed)
+	assert.True(t, c.conn.(*netConnMock).closed)
 }

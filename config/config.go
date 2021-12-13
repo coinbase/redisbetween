@@ -4,13 +4,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const defaultStatsdAddress = "localhost:8125"
@@ -39,6 +40,8 @@ type Upstream struct {
 	ReadTimeout        time.Duration
 	WriteTimeout       time.Duration
 	Readonly           bool
+	MaxSubscriptions   int
+	MaxBlockers        int
 }
 
 func ParseFlags() *Config {
@@ -137,6 +140,8 @@ func parseFlags() (*Config, error) {
 				ReadTimeout:        rt,
 				WriteTimeout:       wt,
 				Readonly:           getBoolParam(params, "readonly"),
+				MaxSubscriptions:   getIntParam(params, "maxsubscriptions", 1),
+				MaxBlockers:        getIntParam(params, "maxblockers", 1),
 			}
 
 			upstreams = append(upstreams, us)

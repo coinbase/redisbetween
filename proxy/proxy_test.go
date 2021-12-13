@@ -2,36 +2,22 @@ package proxy
 
 import (
 	"context"
-	"github.com/DataDog/datadog-go/statsd"
-	"github.com/coinbase/redisbetween/config"
+	"strconv"
+	"sync"
+	"testing"
+
 	"github.com/coinbase/redisbetween/messenger"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
-	"net"
-	"os"
-	"strconv"
-	"strings"
-	"sync"
-	"testing"
-	"time"
 )
 
 // assumes a redis cluster running with 6 nodes on 127.0.0.1 ports 7000-7005, and
 // a standalone redis on port 7006. see docker-compose.yml
 
-func redisHost() string {
-	h := os.Getenv("REDIS_HOST")
-	if h != "" {
-		return h
-	}
-	return "127.0.0.1"
-}
-
 func TestProxy(t *testing.T) {
-	sd := setupProxy(t, "7006", -1, false)
+	sd := SetupProxy(t, "7006", -1)
 
-	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006.sock")
+	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
 	assert.NoError(t, res.Err())
 	res = client.Do(context.Background(), "set", "hello", "world")
@@ -51,8 +37,8 @@ type command struct {
 }
 
 func TestIntegrationCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7000", -1, false)
-	clusterClient := setupClusterClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7000.sock", false)
+	shutdownProxy := SetupProxy(t, "7000", -1)
+	clusterClient := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7000.sock", false, 1)
 	var i int
 	var wg sync.WaitGroup
 	for {
@@ -81,8 +67,8 @@ func TestIntegrationCommands(t *testing.T) {
 }
 
 func TestPipelinedCommands(t *testing.T) {
-	shutdownProxy := setupProxy(t, "7006", 3, false)
-	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006-3.sock")
+	shutdownProxy := SetupProxy(t, "7006", 3)
+	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7006-3.sock")
 	var i int
 	var wg sync.WaitGroup
 	for {
@@ -114,8 +100,8 @@ func TestPipelinedCommands(t *testing.T) {
 }
 
 func TestDbSelectCommand(t *testing.T) {
-	shutdown := setupProxy(t, "7006", 3, false)
-	client := setupStandaloneClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7006-3.sock")
+	shutdown := SetupProxy(t, "7006", 3)
+	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7006-3.sock")
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
 	assert.Contains(t, res.String(), "db=3")
@@ -123,8 +109,8 @@ func TestDbSelectCommand(t *testing.T) {
 }
 
 func TestReadonlyCommand(t *testing.T) {
-	shutdown := setupProxy(t, "7000", -1, true)
-	client := setupClusterClient(t, "/var/tmp/redisbetween-"+redisHost()+"-7000-ro.sock", true)
+	shutdown := SetupProxyAdvancedConfig(t, "7000", -1, 1, 1, true)
+	client := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7000-ro.sock", true, 1)
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
 	assert.Contains(t, res.String(), "flags=r")
@@ -167,77 +153,4 @@ func assertResponsePipelined(t *testing.T, cmds []command, c *redis.Client) {
 		actualStrings[i] = a.String()
 	}
 	assert.Equal(t, expected, actualStrings)
-}
-
-func setupProxy(t *testing.T, upstreamPort string, db int, readonly bool) func() {
-	t.Helper()
-
-	uri := redisHost() + ":" + upstreamPort
-
-	sd, err := statsd.New("localhost:8125")
-	assert.NoError(t, err)
-
-	cfg := &config.Config{
-		Network:           "unix",
-		LocalSocketPrefix: "/var/tmp/redisbetween-",
-		LocalSocketSuffix: ".sock",
-		Unlink:            true,
-	}
-
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, 1, 1*time.Second, 1*time.Second, readonly)
-	assert.NoError(t, err)
-	go func() {
-		err := proxy.Run()
-		assert.NoError(t, err)
-	}()
-
-	time.Sleep(1 * time.Second) // todo find a more elegant way to do this
-
-	return func() {
-		proxy.Shutdown()
-	}
-}
-
-func setupStandaloneClient(t *testing.T, address string) *redis.Client {
-	t.Helper()
-	client := redis.NewClient(&redis.Options{Network: "unix", Addr: address, MaxRetries: 1})
-	res := client.Do(context.Background(), "ping")
-	if res.Err() != nil {
-		_ = client.Close()
-		// Use t.Fatalf instead of assert because we want to fail fast if the cluster is down.
-		t.Fatalf("error pinging redis: %v", res.Err())
-	}
-	return client
-}
-
-func setupClusterClient(t *testing.T, address string, readonly bool) *redis.ClusterClient {
-	t.Helper()
-	opt := &redis.ClusterOptions{
-		Addrs: []string{address},
-		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// redis client patch that translates tcp connection attempts to the local socket instead
-			if strings.Contains(network, "tcp") {
-				host, port, err := net.SplitHostPort(addr)
-				if err != nil {
-					return nil, err
-				}
-				addr = "/var/tmp/redisbetween-" + host + "-" + port
-				if readonly {
-					addr += "-ro"
-				}
-				addr += ".sock"
-				network = "unix"
-			}
-			return net.Dial(network, addr)
-		},
-		MaxRetries: 1,
-	}
-	client := redis.NewClusterClient(opt)
-	res := client.Do(context.Background(), "ping")
-	if res.Err() != nil {
-		_ = client.Close()
-		// Use t.Fatalf instead of assert because we want to fail fast if the cluster is down.
-		t.Fatalf("error pinging redis: %v", res.Err())
-	}
-	return client
 }
