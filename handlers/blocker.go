@@ -202,7 +202,7 @@ func (b *blocker) dequeue() {
 		cmd := b.peek()
 
 		if cmd.local.Closed() {
-			b.log.Error("Local connection was closed")
+			b.log.Debug("Local connection was closed")
 		} else if cmd.adjust() {
 			b.log.Debug("blocking command timeout exceeded")
 			b.localWrite(cmd.local, []*redis.Message{redis.NewArray(nil)})
@@ -214,7 +214,7 @@ func (b *blocker) dequeue() {
 				b.log.Error("Upstream disconnected", zap.Error(err))
 				break
 			} else {
-				b.log.Error("Could not roundtrip blocking command", zap.Error(err))
+				b.log.Warn("Could not roundtrip blocking command", zap.Error(err))
 			}
 		}
 
