@@ -8,16 +8,11 @@ var UnsupportedCommands = map[string]bool{
 	// support these?
 	"BLPOP":        true,
 	"BRPOP":        true,
-	"BRPOPLPUSH":   true,
 	"BZPOPMAX":     true,
 	"BZPOPMIN":     true,
 	"XREAD":        true, // streams
 	"XREADGROUP":   true, // streams
-	"SUBSCRIBE":    true,
-	"UNSUBSCRIBE":  true,
 	"WAIT":         true,
-	"PUNSUBSCRIBE": true,
-	"PSUBSCRIBE":   true,
 
 	// these commands also store connection state on the server, and so won't work
 	// with redisbetween without some special work to support them

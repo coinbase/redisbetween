@@ -5,13 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/coinbase/memcachedbetween/listener"
-	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/mongobetween/util"
-	"github.com/coinbase/redisbetween/config"
-	"github.com/coinbase/redisbetween/handlers"
-	"github.com/coinbase/redisbetween/redis"
-	"github.com/mediocregopher/radix/v3"
 	"io"
 	"net"
 	"regexp"
@@ -20,6 +13,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coinbase/memcachedbetween/listener"
+	"github.com/coinbase/memcachedbetween/pool"
+	"github.com/coinbase/mongobetween/util"
+	"github.com/coinbase/redisbetween/config"
+	"github.com/coinbase/redisbetween/handlers"
+	"github.com/coinbase/redisbetween/redis"
+	"github.com/mediocregopher/radix/v3"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap"
@@ -49,9 +50,11 @@ type Proxy struct {
 	listeners    map[string]*listener.Listener
 	listenerLock sync.Mutex
 	listenerWg   sync.WaitGroup
+
+	reservations *handlers.Reservations
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -78,7 +81,8 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
 
-		listeners: make(map[string]*listener.Listener),
+		listeners:    make(map[string]*listener.Listener),
+		reservations: handlers.NewReservations(maxSub, maxBlk, sd),
 	}, nil
 }
 
@@ -95,6 +99,8 @@ func (p *Proxy) Shutdown() {
 		l.Shutdown()
 	}
 	p.listenerLock.Unlock()
+
+	p.reservations.Close()
 	close(p.quit)
 }
 
@@ -273,7 +279,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, s, kill, p.interceptMessages)
+		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, s, kill, p.quit, p.interceptMessages, p.reservations)
 	}
 	shutdownHandler := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)

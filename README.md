@@ -6,9 +6,11 @@ that cannot otherwise share a connection pool need to connect to a single redis 
 
 redisbetween supports both standalone and clustered redis deployments with the following caveats:
 
-- **Blocking Commands** that cause the client to hold a connection open such as `BLPOP`, `BRPOPLPUSH`, `SUBSCRIBE` and
-`WAIT` are not allowed by redisbetween because of the risk of exhausting the connection pool. For example, redisbetween
-is not a good solution for sidekiq servers which rely on these blocking commands.
+- **Blocking Commands** that cause the client to hold a connection open are partially supported, with limitations.
+Specifically, `BRPOPLPUSH` and `SUBSCRIBE`/`PSUBSCRIBE` are supported in non-clustered mode. In order to prevent
+exhausting the connection pool, these commands are implemented using reserved connections, configured via
+`maxsubscriptions` and `maxblockers` (both default to 1). The supported commands are specifically intended to support
+sidekiq servers with reliable fetch. Other blocking commands such as `BLPOP` or `WAIT` are not yet supported.
 
 - **Pipelines** are supported, but require a client patch. Normally, redis clients may send multiple commands
 back-to-back before reading a batch of responses all at once from the server. Since redisbetween shares upstream
@@ -111,3 +113,7 @@ Each URI can specify the following settings as GET params:
 - `readtimeout` timeout for reads to this upstream. Defaults to 5s
 - `writetimeout` timeout for writes to this upstream. Defaults to 5s
 - `readonly` every connection issues a [READONLY](https://redis.io/commands/readonly) command before entering the pool. Defaults to false
+- `maxsubscriptions` sets the max number of channels that can be subscribed to at one time. Defaults to 1.
+- `maxblockers` sets the max number of commands that can be blocking at one time. Defaults to 1. 
+
+Example: `./redisbetween -unlink -pretty -loglevel debug redis://localhost:7001?maxsubscriptions=2&maxblockers=2`
