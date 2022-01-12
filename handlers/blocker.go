@@ -243,7 +243,7 @@ func (bc *blockingCommand) adjust() bool {
 	elapsed := time.Since(bc.start)
 	adjusted := bc.timeout - elapsed
 
-	if adjusted.Seconds() <= 0 {
+	if adjusted.Seconds() < 0.1 {
 		return true
 	}
 
