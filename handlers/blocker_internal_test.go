@@ -234,10 +234,14 @@ func TestUpstreamDisconnect(t *testing.T) {
 	msgr.readErr = io.EOF
 
 	// Send blocking messages
-	handleBlocker(conns[0], getDefaultBlockerMessage())
-	handleBlocker(conns[1], getDefaultBlockerMessage())
-	handleBlocker(conns[2], getDefaultBlockerMessage())
-	handleBlocker(conns[3], getDefaultBlockerMessage())
+	err := handleBlocker(conns[0], getDefaultBlockerMessage())
+	assert.NoError(t, err)
+	err = handleBlocker(conns[1], getDefaultBlockerMessage())
+	assert.NoError(t, err)
+	err = handleBlocker(conns[2], getDefaultBlockerMessage())
+	assert.NoError(t, err)
+	err = handleBlocker(conns[3], getDefaultBlockerMessage())
+	assert.NoError(t, err)
 	bl := rs.get("b", "default").(*blocker)
 
 	for !isClosed(bl) {
@@ -266,7 +270,8 @@ func TestClusteredRedis(t *testing.T) {
 	}
 
 	// Send blocking messages and wait for the blocker to close
-	handleBlocker(conns[0], getDefaultBlockerMessage())
+	err := handleBlocker(conns[0], getDefaultBlockerMessage())
+	assert.NoError(t, err)
 	bl := rs.get("b", "default").(*blocker)
 	for !isClosed(bl) {
 		time.Sleep(10 * time.Millisecond)

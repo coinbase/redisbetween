@@ -28,7 +28,8 @@ func TestOneSubscription(t *testing.T) {
 	pubClient := setupStandaloneClient(t, id)
 	defer cleanupClient(t, pubClient)
 
-	pubsub, err := subscribe(subClient, ctx, chName)
+	pubsub, err := subscribe(ctx, subClient, chName)
+	assert.NoError(t, err)
 
 	// Publish the message
 	err = pubClient.Publish(ctx, chName, "message1").Err()
@@ -39,7 +40,7 @@ func TestOneSubscription(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "message1", msg.Payload)
 
-	assertNoMessages(t, ctx, pubsub)
+	assertNoMessages(ctx, t, pubsub)
 }
 
 func TestMultiSubscription(t *testing.T) {
@@ -72,7 +73,7 @@ func TestMultiSubscription(t *testing.T) {
 
 		go func(index int, client *redis.Client) {
 			defer wg.Done()
-			pubsub, err := subscribe(client, ctx, chName)
+			pubsub, err := subscribe(ctx, client, chName)
 			if err != nil {
 				t.Errorf("could not subscribe client %d: %v", index, err)
 			}
@@ -115,6 +116,7 @@ func TestClusteredSubscribe(t *testing.T) {
 	pubsub := pubClient.Subscribe(ctx, chName)
 	// Wait for confirmation that subscription is created before publishing anything.
 	_, err := pubsub.Receive(ctx)
+	assert.NoError(t, err)
 
 	// Publish the message
 	err = pubClient.Publish(ctx, chName, "message1").Err()
@@ -125,7 +127,7 @@ func TestClusteredSubscribe(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "message1", msg.Payload)
 
-	assertNoMessages(t, ctx, pubsub)
+	assertNoMessages(ctx, t, pubsub)
 }
 
 func TestSubscribeAfterPublish(t *testing.T) {
@@ -148,10 +150,11 @@ func TestSubscribeAfterPublish(t *testing.T) {
 	subClient := setupStandaloneClient(t, id)
 	defer cleanupClient(t, subClient)
 
-	pubsub, err := subscribe(subClient, ctx, chName)
+	pubsub, err := subscribe(ctx, subClient, chName)
+	assert.NoError(t, err)
 
 	// Ensure we didn't receive the message
-	assertNoMessages(t, ctx, pubsub)
+	assertNoMessages(ctx, t, pubsub)
 }
 
 func TestUnsubscribe(t *testing.T) {
@@ -169,7 +172,8 @@ func TestUnsubscribe(t *testing.T) {
 	pubClient := setupStandaloneClient(t, id)
 	defer cleanupClient(t, pubClient)
 
-	pubsub, err := subscribe(subClient, ctx, chName)
+	pubsub, err := subscribe(ctx, subClient, chName)
+	assert.NoError(t, err)
 
 	// Ensure we can receive messages
 	err = pubClient.Publish(ctx, chName, "message1").Err()
@@ -187,7 +191,7 @@ func TestUnsubscribe(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Ensure there were no more messages received
-	assertNoMessages(t, ctx, pubsub)
+	assertNoMessages(ctx, t, pubsub)
 }
 
 func TestMaxSubscriptions(t *testing.T) {
@@ -203,14 +207,14 @@ func TestMaxSubscriptions(t *testing.T) {
 	subClient2 := setupStandaloneClient(t, id)
 	defer cleanupClient(t, subClient2)
 
-	_, err := subscribe(subClient1, ctx, "TestMaxSubscriptions1")
+	_, err := subscribe(ctx, subClient1, "TestMaxSubscriptions1")
 	assert.NoError(t, err)
 
-	_, err = subscribe(subClient2, ctx, "TestMaxSubscriptions2")
+	_, err = subscribe(ctx, subClient2, "TestMaxSubscriptions2")
 	assert.Error(t, err)
 }
 
-func assertNoMessages(t *testing.T, ctx context.Context, pubsub *redis.PubSub) {
+func assertNoMessages(ctx context.Context, t *testing.T, pubsub *redis.PubSub) {
 	t.Helper()
 
 	_, err := pubsub.ReceiveTimeout(ctx, time.Second)
@@ -228,7 +232,7 @@ func setupStandaloneClient(t *testing.T, id int) *redis.Client {
 	return proxy.SetupStandaloneClient(t, fmt.Sprintf("/var/tmp/redisbetween-%d-"+proxy.RedisHost()+"-7006.sock", id))
 }
 
-func subscribe(client *redis.Client, ctx context.Context, channel string) (*redis.PubSub, error) {
+func subscribe(ctx context.Context, client *redis.Client, channel string) (*redis.PubSub, error) {
 	pubsub := client.Subscribe(ctx, channel)
 
 	// Wait for confirmation that subscription is created before publishing anything.

@@ -254,7 +254,7 @@ func (s *subscription) broadcast() {
 			}
 		}
 
-		if wm != nil && len(wm) > 0 {
+		if len(wm) > 0 {
 			s.Lock()
 			s.log.Debug(
 				"Writing message to subscribers",

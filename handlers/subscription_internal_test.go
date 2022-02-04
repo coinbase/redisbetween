@@ -116,8 +116,10 @@ func TestBroadcastMessage(t *testing.T) {
 
 	// Subscribe. Once these are subscribed they'll start reading messages off of the mock messenger
 	// and writing the fake messages to the locals.
-	handleSubscription(conns[0], wm)
-	handleSubscription(conns[1], wm)
+	err := handleSubscription(conns[0], wm)
+	assert.NoError(t, err)
+	err = handleSubscription(conns[1], wm)
+	assert.NoError(t, err)
 	sub := rs.get("c", testChannelName).(*subscription)
 	defer sub.close()
 
@@ -142,15 +144,18 @@ func TestUnsubscribeLocal(t *testing.T) {
 	msgr.response = nil
 
 	// Subscribe
-	handleSubscription(conns[0], subMsg)
-	handleSubscription(conns[1], subMsg)
+	err := handleSubscription(conns[0], subMsg)
+	assert.NoError(t, err)
+	err = handleSubscription(conns[1], subMsg)
+	assert.NoError(t, err)
 	sub := rs.get("c", testChannelName).(*subscription)
 	sub.init = unsubMsg
 	defer sub.close()
 
 	// Unsubscribe 1 local
 	assert.Equal(t, 2, len(sub.locals))
-	sub.unsubscribe(conns[0], nil)
+	err = sub.unsubscribe(conns[0], nil)
+	assert.NoError(t, err)
 	assert.Equal(t, 1, len(sub.locals))
 
 	// Ensure unsubscribe message was written to local
@@ -175,15 +180,19 @@ func TestUnsubscribeUpstream(t *testing.T) {
 	msgr.response = nil
 
 	// Subscribe
-	handleSubscription(conns[0], wm)
-	handleSubscription(conns[1], wm)
+	err := handleSubscription(conns[0], wm)
+	assert.NoError(t, err)
+	err = handleSubscription(conns[1], wm)
+	assert.NoError(t, err)
 	sub := rs.get("c", testChannelName).(*subscription)
 
 	// Ensure upstream was returned to pool
 	unsubMsg := unsubscribeMessage(testChannelName)
 	assert.False(t, sm.connWrapperMock.returned)
-	sub.unsubscribe(conns[0], nil)
-	sub.unsubscribe(conns[1], unsubMsg)
+	err = sub.unsubscribe(conns[0], nil)
+	assert.NoError(t, err)
+	err = sub.unsubscribe(conns[1], unsubMsg)
+	assert.NoError(t, err)
 	assert.True(t, sm.connWrapperMock.returned)
 
 	// Ensure unsub message was sent to upstream

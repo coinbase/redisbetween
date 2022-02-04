@@ -80,12 +80,12 @@ func (r *Reservations) add(prefix string, source string, res reservation) error 
 		return fmt.Errorf("reservations are closed: %s", key)
 	}
 
-	if _, ok := r.list[key]; ok {
+	_, ok := r.list[key]
+	if !ok {
 		return reservationError{key: key}
-	} else {
-		r.list[key] = res
 	}
 
+	r.list[key] = res
 	return nil
 }
 
@@ -102,12 +102,12 @@ func (r *Reservations) get(prefix string, source string) reservation {
 func (r *Reservations) delete(prefix string, source string) error {
 	key := fmt.Sprintf("%s:%s", prefix, source)
 
-	if _, ok := r.list[key]; ok {
-		delete(r.list, key)
-	} else {
+	_, ok := r.list[key]
+	if !ok {
 		return fmt.Errorf("reservation with key '%s' does not exist", key)
 	}
 
+	delete(r.list, key)
 	return nil
 }
 
