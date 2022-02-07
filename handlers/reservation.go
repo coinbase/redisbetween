@@ -81,7 +81,7 @@ func (r *Reservations) add(prefix string, source string, res reservation) error 
 	}
 
 	_, ok := r.list[key]
-	if !ok {
+	if ok {
 		return reservationError{key: key}
 	}
 
