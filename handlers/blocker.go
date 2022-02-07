@@ -307,7 +307,9 @@ func (b *blocker) close() {
 
 		for i := range b.queue {
 			local := b.queue[i].local
-			local.Close()
+			if err := local.Close(); err != nil {
+				b.log.Warn("Could not close local connection", zap.Error(err))
+			}
 
 			b.parent.monitor.decrementLocalBlockers(
 				"reservation_event.local_unblock",
