@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    redisbetween (0.1.2)
+    redisbetween (0.2.2)
       redis
 
 GEM

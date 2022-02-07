@@ -38,7 +38,7 @@ func (m *connWrapperMock) Return() error {
 }
 
 func (m *connWrapperMock) Alive() bool {
-	return m.closed == false
+	return !m.closed
 }
 
 func (m *connWrapperMock) ID() uint64 {

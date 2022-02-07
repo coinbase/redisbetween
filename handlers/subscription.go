@@ -174,7 +174,10 @@ func (s *subscription) close() {
 			[]string{fmt.Sprintf("channel:%s", s.channels)})
 
 		for _, local := range s.locals {
-			local.Close()
+			if err := local.Close(); err != nil {
+				s.log.Warn("Could not close local connection", zap.Error(err))
+			}
+
 			s.parent.monitor.decrementLocalSubscriptions(
 				"reservation_event.local_unsubscribe",
 				[]string{fmt.Sprintf("channel:%s", s.channels)})
@@ -254,7 +257,7 @@ func (s *subscription) broadcast() {
 			}
 		}
 
-		if wm != nil && len(wm) > 0 {
+		if len(wm) > 0 {
 			s.Lock()
 			s.log.Debug(
 				"Writing message to subscribers",

@@ -40,7 +40,6 @@ type blocker struct {
 	kill     chan interface{} // global kill
 
 	source       string
-	init         []*redis.Message
 	log          *zap.Logger
 	readTimeout  time.Duration
 	writeTimeout time.Duration
@@ -49,7 +48,7 @@ type blocker struct {
 	closed  bool
 }
 
-var upstreamDisconnectedErr = errors.New("upstream disconnected")
+var errUpstreamDisconnected = errors.New("upstream disconnected")
 
 func handleBlocker(c *connection, wm []*redis.Message) error {
 	c.reservations.Lock()
@@ -205,9 +204,11 @@ func (b *blocker) dequeue() {
 			b.log.Debug("Local connection was closed")
 		} else if cmd.adjust() {
 			b.log.Debug("blocking command timeout exceeded")
-			b.localWrite(cmd.local, []*redis.Message{redis.NewArray(nil)})
+			if err := b.localWrite(cmd.local, []*redis.Message{redis.NewArray(nil)}); err != nil {
+				b.log.Error("local write error", zap.Error(err))
+			}
 		} else if err := b.roundTrip(cmd); err != nil {
-			if errors.Is(err, upstreamDisconnectedErr) {
+			if errors.Is(err, errUpstreamDisconnected) {
 				// When we see the upstream disconnected we want to break out of the loop and close the blocker +
 				// all local connections to simulate what the client would see if they were talking directly
 				// to the upstream.
@@ -306,7 +307,9 @@ func (b *blocker) close() {
 
 		for i := range b.queue {
 			local := b.queue[i].local
-			local.Close()
+			if err := local.Close(); err != nil {
+				b.log.Warn("Could not close local connection", zap.Error(err))
+			}
 
 			b.parent.monitor.decrementLocalBlockers(
 				"reservation_event.local_unblock",
@@ -327,7 +330,7 @@ func (b *blocker) roundTrip(cmd *blockingCommand) error {
 	res, err := b.upstreamRead(b.readTimeout)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
-			return upstreamDisconnectedErr
+			return errUpstreamDisconnected
 		}
 
 		return fmt.Errorf("upstream read: %w", err)
@@ -336,7 +339,9 @@ func (b *blocker) roundTrip(cmd *blockingCommand) error {
 	if isClusterResponse(res) {
 		err = fmt.Errorf("blocking commands aren't supported for Redis cluster")
 		mm := []*redis.Message{redis.NewError([]byte(fmt.Sprintf("redisbetween: %v", err.Error())))}
-		b.localWrite(cmd.local, mm)
+		if err := b.localWrite(cmd.local, mm); err != nil {
+			b.log.Error("local write error", zap.Error(err))
+		}
 
 		return err
 	}
