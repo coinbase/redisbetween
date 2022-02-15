@@ -30,8 +30,12 @@ func TestParseFlags(t *testing.T) {
 		"-readtimeout", "1s",
 		"-writetimeout", "1s",
 		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
-		"redis://localhost:7002?minpoolsize=10&label=cluster2&readtimeout=3s&writetimeout=6s",
+		"redis://localhost:7002?minpoolsize=${TestParseFlags_MinPoolSize}&label=cluster2&readtimeout=3s&writetimeout=6s",
 	}
+
+	minPoolEnvVar := "TestParseFlags_MinPoolSize"
+	os.Setenv(minPoolEnvVar, "10")
+	defer os.Unsetenv(minPoolEnvVar)
 
 	resetFlags()
 	c, err := parseFlags()

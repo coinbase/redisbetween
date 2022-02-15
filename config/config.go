@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -190,7 +191,9 @@ func getIntParam(v url.Values, key string, def int) int {
 	if !ok {
 		return def
 	}
-	i, err := strconv.Atoi(cl[0])
+
+	val := expandEnv(cl[0])
+	i, err := strconv.Atoi(val)
 	if err != nil {
 		return def
 	}
@@ -200,4 +203,11 @@ func getIntParam(v url.Values, key string, def int) int {
 func getBoolParam(v url.Values, key string) bool {
 	val := getStringParam(v, key, "false")
 	return val == "true"
+}
+
+func expandEnv(config string) string {
+	// more restrictive version of os.ExpandEnv that only replaces exact matches of ${ENV}
+	return regexp.MustCompile(`\${(\w+)}`).ReplaceAllStringFunc(config, func(s string) string {
+		return os.ExpandEnv(s)
+	})
 }
