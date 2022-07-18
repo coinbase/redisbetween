@@ -408,15 +408,6 @@ func parseCommand(c *connection, wm []*redis.Message) (*blockingCommand, error) 
 	return cmd, nil
 }
 
-// Checks if command is a) singular and b) is a *blocking command
-func isBlockingCommand(commands []string) bool {
-	if len(commands) == 1 && strings.Contains(commands[0], "BRPOPLPUSH") {
-		return true
-	}
-
-	return false
-}
-
 func isClusterResponse(res []*redis.Message) bool {
 	for _, m := range res {
 		if m.IsError() {

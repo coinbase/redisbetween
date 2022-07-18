@@ -33,16 +33,23 @@ type Config struct {
 }
 
 type Upstream struct {
-	UpstreamConfigHost string
-	Label              string
-	MaxPoolSize        int
-	MinPoolSize        int
-	Database           int
-	ReadTimeout        time.Duration
-	WriteTimeout       time.Duration
-	Readonly           bool
-	MaxSubscriptions   int
-	MaxBlockers        int
+	UpstreamConfigHost  string
+	Label               string
+	MaxPoolSize         int
+	MinPoolSize         int
+	Database            int
+	ReadTimeout         time.Duration
+	WriteTimeout        time.Duration
+	Readonly            bool
+	MaxSubscriptions    int
+	MaxBlockers         int
+	RequestMirrorPolicy RequestMirrorPolicy
+}
+
+type RequestMirrorPolicy struct {
+	UpstreamLabel string
+	ExcludeRead   bool
+	ExcludeWrite  bool
 }
 
 func ParseFlags() *Config {

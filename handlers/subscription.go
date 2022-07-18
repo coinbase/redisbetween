@@ -366,12 +366,3 @@ func unsubscribeMessage(channels string) []*redis.Message {
 
 	return msgs
 }
-
-// Checks if command is a) singular and b) is a *subscribe command
-func isSubscriptionCommand(commands []string) bool {
-	if len(commands) == 1 && strings.Contains(commands[0], "SUBSCRIBE") {
-		return true
-	}
-
-	return false
-}
