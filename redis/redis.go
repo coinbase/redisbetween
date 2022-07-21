@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/mongobetween/util"
+	"github.com/coinbase/redisbetween/utils"
 	"go.uber.org/zap"
 	"io"
 	"net"
@@ -16,13 +16,13 @@ import (
 )
 
 type Options struct {
-	addr         string
-	database     int
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	readonly     bool
-	minPoolSize  int
-	maxPoolSize  int
+	Addr         string
+	Database     int
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	Readonly     bool
+	MinPoolSize  int
+	MaxPoolSize  int
 }
 
 type Client struct {
@@ -31,9 +31,14 @@ type Client struct {
 	config    *Options
 }
 
+type ClientInterface interface {
+	Call(ctx context.Context, msg []*Message) ([]*Message, error)
+	CheckoutConnection(ctx context.Context) (conn pool.ConnectionWrapper, err error)
+}
+
 // NewClient opens a connection pool to the redis server
 // and returns a handle.
-func NewClient(ctx context.Context, c *Options) (*Client, error) {
+func NewClient(ctx context.Context, c *Options) (ClientInterface, error) {
 	server, err := connectToServer(ctx, c)
 
 	if err != nil {
@@ -51,23 +56,20 @@ func NewClient(ctx context.Context, c *Options) (*Client, error) {
 // returns the response message sent by the server. The method
 // will fail if the command is blocking
 func (r *Client) Call(ctx context.Context, msg []*Message) ([]*Message, error) {
-	log, ok := ctx.Value("log").(*zap.Logger)
-
-	if !ok {
-		log = zap.L()
-	}
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 
 	var err error
 	var conn pool.ConnectionWrapper
-	if conn, err = r.checkoutConnection(ctx); err != nil {
+	if conn, err = r.CheckoutConnection(ctx); err != nil {
 		return nil, err
 	}
 
-	if s, ok := ctx.Value("statsd").(*statsd.Client); ok {
+	if s, ok := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface); ok {
+		id, address := conn.ID(), conn.Address().String()
 		defer func(start time.Time) {
 			_ = s.Timing("upstream_round_trip", time.Since(start), []string{
-				fmt.Sprintf("upstream_id:%d", conn.ID()),
-				fmt.Sprintf("address:%s", conn.Address().String()),
+				fmt.Sprintf("upstream_id:%d", id),
+				fmt.Sprintf("address:%s", address),
 				fmt.Sprintf("success:%v", err == nil),
 			}, 1)
 		}(time.Now())
@@ -80,11 +82,11 @@ func (r *Client) Call(ctx context.Context, msg []*Message) ([]*Message, error) {
 	}()
 	l.Debug("Connection checked out")
 
-	if err = r.messenger.Write(ctx, l, msg, conn.Conn(), conn.Address().String(), conn.ID(), r.config.writeTimeout, false, conn.Close); err != nil {
+	if err = r.messenger.Write(ctx, l, msg, conn.Conn(), conn.Address().String(), conn.ID(), r.config.WriteTimeout, false, conn.Close); err != nil {
 		return nil, err
 	}
 
-	res, err := r.messenger.Read(ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), r.config.readTimeout, len(msg), false, conn.Close)
+	res, err := r.messenger.Read(ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), r.config.ReadTimeout, len(msg), false, conn.Close)
 
 	return res, err
 }
@@ -95,32 +97,27 @@ func (r *Client) Close(ctx context.Context) error {
 }
 
 func connectToServer(ctx context.Context, c *Options) (*pool.Server, error) {
-	log, ok := ctx.Value("log").(*zap.Logger)
-	if !ok {
-		log = zap.L()
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger).With(zap.String("upstream", c.Addr))
+	s := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface)
+	sd, err := utils.StatsdWithTags(s, []string{fmt.Sprintf("upstream:%s", c.Addr)})
+
+	if err != nil {
+		return nil, err
 	}
 
-	var opts []pool.ServerOption
-	if s, ok := ctx.Value("statsd").(*statsd.Client); ok {
-		opts = []pool.ServerOption{
-			pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(s) }),
-		}
-	} else {
-		opts = []pool.ServerOption{}
+	opts := []pool.ServerOption{
+		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sd) }),
+		pool.WithMinConnections(func(uint64) uint64 { return uint64(c.MinPoolSize) }),
+		pool.WithMaxConnections(func(uint64) uint64 { return uint64(c.MaxPoolSize) }),
 	}
-
-	opts = append(opts,
-		pool.WithMinConnections(func(uint64) uint64 { return uint64(c.minPoolSize) }),
-		pool.WithMaxConnections(func(uint64) uint64 { return uint64(c.maxPoolSize) }),
-	)
 
 	var initCommand []byte
-	if c.database > -1 {
+	if c.Database > -1 {
 		// if a db number has been specified, we need to issue a SELECT command before adding
 		// that connection to the pool, so it's always pinned to the right db
-		d := strconv.Itoa(c.database)
+		d := strconv.Itoa(c.Database)
 		initCommand = []byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n")
-	} else if c.readonly {
+	} else if c.Readonly {
 		// if this pool is designated for replica reads, we need to set the READONLY flag on
 		// the upstream connection before adding it to the pool. this is only supported by
 		// clustered redis, so it cannot be combined with SELECT.
@@ -134,12 +131,13 @@ func connectToServer(ctx context.Context, c *Options) (*pool.Server, error) {
 		}))
 	}
 
-	server, err := pool.ConnectServer(pool.Address(c.addr), opts...)
+	server, err := pool.ConnectServer(pool.Address(c.Addr), opts...)
 	return server, err
 }
 
-func (r *Client) checkoutConnection(ctx context.Context) (conn pool.ConnectionWrapper, err error) {
-	if s, ok := ctx.Value("statsd").(*statsd.Client); ok {
+// CheckoutConnection returns a connection from the pool. The method is temporarily made public
+func (r *Client) CheckoutConnection(ctx context.Context) (conn pool.ConnectionWrapper, err error) {
+	if s, ok := ctx.Value(utils.CtxStatsdKey).(*statsd.Client); ok {
 		defer func(start time.Time) {
 			addr := ""
 			if conn != nil {
@@ -160,9 +158,9 @@ func (r *Client) checkoutConnection(ctx context.Context) (conn pool.ConnectionWr
 	return conn, nil
 }
 
-func poolMonitor(sd *statsd.Client) *pool.Monitor {
-	checkedOut, checkedIn := util.StatsdBackgroundGauge(sd, "pool.checked_out_connections", []string{})
-	opened, closed := util.StatsdBackgroundGauge(sd, "pool.open_connections", []string{})
+func poolMonitor(sd statsd.ClientInterface) *pool.Monitor {
+	checkedOut, checkedIn := utils.StatsdBackgroundGauge(sd, "pool.checked_out_connections", []string{})
+	opened, closed := utils.StatsdBackgroundGauge(sd, "pool.open_connections", []string{})
 
 	return &pool.Monitor{
 		Event: func(e *pool.Event) {
@@ -187,7 +185,7 @@ func poolMonitor(sd *statsd.Client) *pool.Monitor {
 		},
 	}
 }
-func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
+func connectWithInitCommand(command []byte, log *zap.Logger) pool.ConnectionOption {
 	co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
 		return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
 			dlr := &net.Dialer{Timeout: 30 * time.Second}
@@ -197,13 +195,13 @@ func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.Connection
 			}
 			_, err = conn.Write(command)
 			if err != nil {
-				logWith.Error("failed to write command", zap.Error(err))
+				log.Error("failed to write command", zap.Error(err))
 				return nil, err
 			}
 			res := make([]byte, 5)
 			_, err = io.ReadFull(conn, res)
 			if err != nil || string(res) != "+OK\r\n" {
-				logWith.Error("failed to read response", zap.Error(err), zap.String("response", string(res)))
+				log.Error("failed to read response", zap.Error(err), zap.String("response", string(res)))
 				return nil, err
 			}
 			return conn, err

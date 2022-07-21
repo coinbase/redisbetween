@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"github.com/coinbase/redisbetween/utils"
 	"io"
 	"net"
 	"runtime/debug"
@@ -17,6 +18,8 @@ import (
 	"go.uber.org/zap"
 )
 
+type RedisLookup func(addr string) redis.ClientInterface
+
 type connection struct {
 	sync.Mutex
 
@@ -28,18 +31,18 @@ type connection struct {
 	conn         net.Conn
 	address      string
 	id           uint64
-	server       pool.ServerWrapper
 	kill         chan interface{}
 	quit         chan interface{}
 	interceptor  MessageInterceptor
 	messenger    redis.Messenger
 	reservations *Reservations
 	isClosed     bool
+	redisLookup  RedisLookup
 }
 
 type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, readTimeout, writeTimeout time.Duration, id uint64, server *pool.Server, kill chan interface{}, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, readTimeout, writeTimeout time.Duration, id uint64, kill chan interface{}, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, redisLookup RedisLookup) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -53,19 +56,22 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, addres
 		conn:         conn,
 		address:      address,
 		id:           id,
-		server:       server,
 		kill:         kill,
 		quit:         quit,
 		interceptor:  interceptor,
 		messenger:    redis.WireMessenger{},
 		reservations: reservations,
+		redisLookup:  redisLookup,
 	}
-	c.processMessages()
+
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, sd)
+	c.processMessages(ctx)
 }
 
-func (c *connection) processMessages() {
+func (c *connection) processMessages(ctx context.Context) {
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	for {
-		l, err := c.handleMessage()
+		err := c.handleMessage(ctx)
 		if err != nil {
 			if err == io.EOF {
 				c.isClosed = true
@@ -74,7 +80,7 @@ func (c *connection) processMessages() {
 				case <-c.kill:
 					// ignore errors from force shutdown
 				default:
-					l.Error("Error handling message", zap.Error(err))
+					log.Error("Error handling message", zap.Error(err))
 				}
 			}
 			return
@@ -82,56 +88,57 @@ func (c *connection) processMessages() {
 	}
 }
 
-func (c *connection) handleMessage() (*zap.Logger, error) {
+func (c *connection) handleMessage(ctx context.Context) error {
 	var err error
 	var incomingCmds []string
+
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+	s := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
 
 	defer func(start time.Time) {
 		if len(incomingCmds) == 0 {
 			incomingCmds = []string{"PARSERROR"}
 		}
 
-		_ = c.statsd.Timing("handle_message", time.Since(start), []string{
+		_ = s.Timing("handle_message", time.Since(start), []string{
 			fmt.Sprintf("success:%v", err == nil),
 			fmt.Sprintf("command:%v", incomingCmds[0]),
 		}, 1)
 	}(time.Now())
 
-	l := c.log
-
 	var wm []*redis.Message
-	if wm, err = c.messenger.Read(c.ctx, l, c.conn, c.address, c.id, 0, 1, true, c.conn.Close); err != nil {
-		return l, err
+	if wm, err = c.messenger.Read(c.ctx, log, c.conn, c.address, c.id, 0, 1, true, c.conn.Close); err != nil {
+		return err
 	}
 
 	incomingCmds, err = c.validateCommands(wm)
 	if err != nil {
 		mm := []*redis.Message{redis.NewError([]byte(fmt.Sprintf("redisbetween: %v", err.Error())))}
-		c.log.Debug("invalid commands", zap.Strings("commands", incomingCmds), zap.Error(err))
-		err = c.messenger.Write(c.ctx, l, mm, c.conn, c.address, c.id, 0, false, c.conn.Close)
-		return l, err
+		log.Debug("invalid commands", zap.Strings("commands", incomingCmds), zap.Error(err))
+		err = c.messenger.Write(c.ctx, log, mm, c.conn, c.address, c.id, 0, false, c.conn.Close)
+		return err
 	}
 
 	if isSubscriptionCommand(incomingCmds) {
 		if err = handleSubscription(c, wm); err != nil {
-			return l, err
+			return err
 		}
 
 	} else if isBlockingCommand(incomingCmds) {
 		if err = handleBlocker(c, wm); err != nil {
-			return l, err
+			return err
 		}
 	} else {
-		if wm, l, err = c.roundTrip(wm); err != nil {
-			return l, err
+		client := c.redisLookup(c.address)
+		if wm, err = client.Call(ctx, wm); err != nil {
+			return err
 		}
-
 		c.interceptor(incomingCmds, wm)
 
-		err = c.messenger.Write(c.ctx, l, wm, c.conn, c.address, c.id, 0, len(wm) > 1, c.conn.Close)
+		err = c.messenger.Write(c.ctx, log, wm, c.conn, c.address, c.id, 0, len(wm) > 1, c.conn.Close)
 	}
 
-	return l, err
+	return err
 }
 
 func (c *connection) validateCommands(wm []*redis.Message) ([]string, error) {
@@ -174,51 +181,6 @@ func (c *connection) validateCommands(wm []*redis.Message) ([]string, error) {
 
 }
 
-func (c *connection) roundTrip(wm []*redis.Message) ([]*redis.Message, *zap.Logger, error) {
-	l := c.log
-	var err error
-
-	var conn pool.ConnectionWrapper
-	if conn, err = c.checkoutConnection(); err != nil {
-		return nil, l, err
-	}
-	defer func() {
-		l.Debug("Connection returned to pool (from roundTrip)")
-		_ = conn.Return()
-	}()
-
-	l = c.log.With(zap.Uint64("upstream_id", conn.ID()))
-	l.Debug("Connection checked out")
-
-	if err = c.messenger.Write(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.writeTimeout, false, conn.Close); err != nil {
-		return nil, l, err
-	}
-
-	res, err := c.messenger.Read(c.ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), c.readTimeout, len(wm), false, conn.Close)
-
-	return res, l, err
-}
-
-func (c *connection) checkoutConnection() (conn pool.ConnectionWrapper, err error) {
-	defer func(start time.Time) {
-		addr := ""
-		if conn != nil {
-			addr = conn.Address().String()
-		}
-		_ = c.statsd.Timing("checkout_connection", time.Since(start), []string{
-			fmt.Sprintf("address:%s", addr),
-			fmt.Sprintf("success:%v", err == nil),
-		}, 1)
-	}(time.Now())
-
-	conn, err = c.server.Connection(c.ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return conn, nil
-}
-
 func (c *connection) Write(wm []*redis.Message) error {
 	err := c.messenger.Write(
 		c.ctx, c.log, wm, c.conn, c.address, c.id,
@@ -250,4 +212,10 @@ func (c *connection) Closed() bool {
 	defer c.Unlock()
 
 	return c.isClosed
+}
+
+func (c *connection) checkoutConnection() (pool.ConnectionWrapper, error) {
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, c.log), utils.CtxStatsdKey, c.statsd)
+	client := c.redisLookup(c.address)
+	return client.CheckoutConnection(ctx)
 }

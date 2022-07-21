@@ -5,9 +5,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
+	"github.com/coinbase/redisbetween/utils"
 	"net"
-	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/listener"
-	"github.com/coinbase/memcachedbetween/pool"
 	"github.com/coinbase/mongobetween/util"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/handlers"
@@ -29,13 +27,11 @@ import (
 const restartSleep = 1 * time.Second
 const disconnectTimeout = 10 * time.Second
 
-type RedisLookup func(addr string) *redis.Client
-
 type Proxy struct {
 	log                *zap.Logger
 	statsd             *statsd.Client
 	config             *config.Config
-	redisLookup        RedisLookup
+	redisLookup        handlers.RedisLookup
 	upstreamConfigHost string
 	localConfigHost    string
 	maxPoolSize        int
@@ -52,7 +48,10 @@ type Proxy struct {
 	reservations       *handlers.Reservations
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int) (*Proxy, error) {
+func NewProxy(ctx context.Context, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int, redisLookup handlers.RedisLookup) (*Proxy, error) {
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
+
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -75,6 +74,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		writeTimeout:       writeTimeout,
 		database:           database,
 		readonly:           readonly,
+		redisLookup:        redisLookup,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -244,99 +244,10 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	if err != nil {
 		return nil, err
 	}
-	opts := []pool.ServerOption{
-		pool.WithMinConnections(func(uint64) uint64 { return uint64(p.minPoolSize) }),
-		pool.WithMaxConnections(func(uint64) uint64 { return uint64(p.maxPoolSize) }),
-		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sdWith) }),
-	}
-
-	var initCommand []byte
-
-	if p.database > -1 {
-		// if a db number has been specified, we need to issue a SELECT command before adding
-		// that connection to the pool, so it's always pinned to the right db
-		d := strconv.Itoa(p.database)
-		initCommand = []byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n")
-	} else if p.readonly {
-		// if this pool is designated for replica reads, we need to set the READONLY flag on
-		// the upstream connection before adding it to the pool. this is only supported by
-		// clustered redis, so it cannot be combined with SELECT.
-		initCommand = []byte("*1\r\n$8\r\nREADONLY\r\n")
-	}
-
-	if initCommand != nil {
-		co := connectWithInitCommand(initCommand, logWith)
-		opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
-			return append(cos, co)
-		}))
-	}
-
-	s, err := pool.ConnectServer(pool.Address(upstream), opts...)
-	if err != nil {
-		return nil, err
-	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, s, kill, p.quit, p.interceptMessages, p.reservations)
-	}
-	shutdownHandler := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)
-		defer cancel()
-		_ = s.Disconnect(ctx)
+		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, kill, p.quit, p.interceptMessages, p.reservations, p.redisLookup)
 	}
 
-	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, shutdownHandler)
-}
-
-func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
-	co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
-		return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
-			dlr := &net.Dialer{Timeout: 30 * time.Second}
-			conn, err := dlr.DialContext(ctx, network, address)
-			if err != nil {
-				return nil, err
-			}
-			_, err = conn.Write(command)
-			if err != nil {
-				logWith.Error("failed to write command", zap.Error(err))
-				return nil, err
-			}
-			res := make([]byte, 5)
-			_, err = io.ReadFull(conn, res)
-			if err != nil || string(res) != "+OK\r\n" {
-				logWith.Error("failed to read response", zap.Error(err), zap.String("response", string(res)))
-				return nil, err
-			}
-			return conn, err
-		})
-	})
-	return co
-}
-
-func poolMonitor(sd *statsd.Client) *pool.Monitor {
-	checkedOut, checkedIn := util.StatsdBackgroundGauge(sd, "pool.checked_out_connections", []string{})
-	opened, closed := util.StatsdBackgroundGauge(sd, "pool.open_connections", []string{})
-
-	return &pool.Monitor{
-		Event: func(e *pool.Event) {
-			snake := strings.ToLower(regexp.MustCompile("([a-z0-9])([A-Z])").ReplaceAllString(e.Type, "${1}_${2}"))
-			name := fmt.Sprintf("pool_event.%s", snake)
-			tags := []string{
-				fmt.Sprintf("address:%s", e.Address),
-				fmt.Sprintf("reason:%s", e.Reason),
-			}
-			switch e.Type {
-			case pool.ConnectionCreated:
-				opened(name, tags)
-			case pool.ConnectionClosed:
-				closed(name, tags)
-			case pool.GetSucceeded:
-				checkedOut(name, tags)
-			case pool.ConnectionReturned:
-				checkedIn(name, tags)
-			default:
-				_ = sd.Incr(name, tags, 1)
-			}
-		},
-	}
+	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, func() {})
 }

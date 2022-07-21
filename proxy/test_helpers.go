@@ -10,6 +10,7 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
+	redis2 "github.com/coinbase/redisbetween/redis"
 	"github.com/coinbase/redisbetween/utils"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,7 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 	uri := utils.RedisHost() + ":" + upstreamPort
 
 	sd, err := statsd.New("localhost:8125")
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
 	assert.NoError(t, err)
 
 	cfg := &config.Config{
@@ -35,7 +37,11 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 		Unlink:            true,
 	}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1)
+	client, _ := redis2.NewClient(ctx, &redis2.Options{Addr: uri})
+	lookup := func(string) redis2.ClientInterface {
+		return client
+	}
+	proxy, err := NewProxy(ctx, cfg, "test", uri, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1, lookup)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run()

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"github.com/coinbase/redisbetween/redis"
+	"github.com/coinbase/redisbetween/utils"
 	"os"
 	"os/signal"
 	"sync"
@@ -18,10 +21,22 @@ import (
 func main() {
 	c := config.ParseFlags()
 	log := newLogger(c.Level, c.Pretty)
-	err := run(log, c)
+	s := newStatsd(c, log)
+
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxStatsdKey, s), utils.CtxLogKey, log)
+
+	err := run(ctx, c)
 	if err != nil {
 		log.Panic("error", zap.Error(err))
 	}
+}
+
+func newStatsd(c *config.Config, log *zap.Logger) *statsd.Client {
+	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redisbetween"))
+	if err != nil {
+		log.Panic("Failed to initialize statsd", zap.Error(err))
+	}
+	return s
 }
 
 func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
@@ -45,8 +60,10 @@ func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
 	return log
 }
 
-func run(log *zap.Logger, cfg *config.Config) error {
-	proxies, err := proxies(cfg, log)
+func run(ctx context.Context, cfg *config.Config) error {
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+
+	proxies, err := proxies(ctx, cfg)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -85,16 +102,32 @@ func run(log *zap.Logger, cfg *config.Config) error {
 	return nil
 }
 
-func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err error) {
-	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redisbetween"))
-	if err != nil {
-		return nil, err
-	}
+func proxies(ctx context.Context, c *config.Config) (proxies []*proxy.Proxy, err error) {
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+	upstreams := make(map[string]redis.ClientInterface)
+
+	validUpstreams := make([]config.Upstream, len(c.Upstreams))
+
 	for _, u := range c.Upstreams {
+		client, err := redis.NewClient(ctx, &redis.Options{Addr: u.UpstreamConfigHost})
+
+		if err != nil {
+			log.Error("Failed to connect to upstream", zap.Error(err), zap.String("label", u.Label), zap.String("address", u.UpstreamConfigHost))
+			continue
+		}
+		validUpstreams = append(validUpstreams, u)
+		upstreams[u.UpstreamConfigHost] = client
+	}
+
+	redisLookup := func(addr string) redis.ClientInterface {
+		return upstreams[addr]
+	}
+
+	for _, u := range validUpstreams {
 		p, err := proxy.NewProxy(
-			log, s, c, u.Label, u.UpstreamConfigHost, u.Database,
+			ctx, c, u.Label, u.UpstreamConfigHost, u.Database,
 			u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout,
-			u.Readonly, u.MaxSubscriptions, u.MaxBlockers,
+			u.Readonly, u.MaxSubscriptions, u.MaxBlockers, redisLookup,
 		)
 
 		if err != nil {

@@ -182,13 +182,15 @@ func createConnectionMocks(t *testing.T, numMocks uint64) ([]*connection, *Reser
 
 	for i := uint64(0); i < numMocks; i++ {
 		conn := &connection{
-			log:          observedLogger,
-			statsd:       sd,
-			ctx:          context.Background(),
-			conn:         &netConnMock{},
-			address:      createLocalAddressForMock(i),
-			id:           i,
-			server:       sm,
+			log:     observedLogger,
+			statsd:  sd,
+			ctx:     context.Background(),
+			conn:    &netConnMock{},
+			address: createLocalAddressForMock(i),
+			id:      i,
+			redisLookup: func(addr string) redis.ClientInterface {
+				return redis.NewMockClient(sm)
+			},
 			kill:         make(chan interface{}),
 			interceptor:  func(incomingCmds []string, m []*redis.Message) {},
 			reservations: rs,
