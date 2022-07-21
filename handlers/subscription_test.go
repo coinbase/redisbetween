@@ -3,12 +3,13 @@ package handlers_test
 import (
 	"context"
 	"fmt"
+	"github.com/coinbase/redisbetween/proxy"
+	"github.com/coinbase/redisbetween/utils"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/coinbase/redisbetween/proxy"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )
@@ -103,7 +104,7 @@ func TestClusteredSubscribe(t *testing.T) {
 	ctx := context.Background()
 	chName := "TestClusteredSubscribe"
 	id := randomInteger()
-	address := fmt.Sprintf("/var/tmp/redisbetween-%d-"+proxy.RedisHost()+"-7000.sock", id)
+	address := fmt.Sprintf("/var/tmp/redisbetween-%d-"+utils.RedisHost()+"-7000.sock", id)
 
 	// Setup
 	sd := proxy.SetupProxyAdvancedConfig(t, "7000", -1, 2, id, false)
@@ -229,7 +230,7 @@ func cleanupClient(t *testing.T, client *redis.Client) {
 }
 
 func setupStandaloneClient(t *testing.T, id int) *redis.Client {
-	return proxy.SetupStandaloneClient(t, fmt.Sprintf("/var/tmp/redisbetween-%d-"+proxy.RedisHost()+"-7006.sock", id))
+	return proxy.SetupStandaloneClient(t, fmt.Sprintf("/var/tmp/redisbetween-%d-"+utils.RedisHost()+"-7006.sock", id))
 }
 
 func subscribe(ctx context.Context, client *redis.Client, channel string) (*redis.PubSub, error) {

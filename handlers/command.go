@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/messenger"
 	"github.com/coinbase/redisbetween/redis"
 
 	"github.com/DataDog/datadog-go/statsd"
@@ -33,7 +32,7 @@ type connection struct {
 	kill         chan interface{}
 	quit         chan interface{}
 	interceptor  MessageInterceptor
-	messenger    messenger.Messenger
+	messenger    redis.Messenger
 	reservations *Reservations
 	isClosed     bool
 }
@@ -58,7 +57,7 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, addres
 		kill:         kill,
 		quit:         quit,
 		interceptor:  interceptor,
-		messenger:    messenger.WireMessenger{},
+		messenger:    redis.WireMessenger{},
 		reservations: reservations,
 	}
 	c.processMessages()

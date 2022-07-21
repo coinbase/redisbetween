@@ -3,12 +3,12 @@ package handlers_test
 import (
 	"context"
 	"fmt"
+	"github.com/coinbase/redisbetween/proxy"
 	"math/rand"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/coinbase/redisbetween/proxy"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )

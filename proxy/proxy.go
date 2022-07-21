@@ -29,12 +29,13 @@ import (
 const restartSleep = 1 * time.Second
 const disconnectTimeout = 10 * time.Second
 
+type RedisLookup func(addr string) *redis.Client
+
 type Proxy struct {
-	log    *zap.Logger
-	statsd *statsd.Client
-
-	config *config.Config
-
+	log                *zap.Logger
+	statsd             *statsd.Client
+	config             *config.Config
+	redisLookup        RedisLookup
 	upstreamConfigHost string
 	localConfigHost    string
 	maxPoolSize        int
@@ -43,15 +44,12 @@ type Proxy struct {
 	writeTimeout       time.Duration
 	database           int
 	readonly           bool
-
-	quit chan interface{}
-	kill chan interface{}
-
-	listeners    map[string]*listener.Listener
-	listenerLock sync.Mutex
-	listenerWg   sync.WaitGroup
-
-	reservations *handlers.Reservations
+	quit               chan interface{}
+	kill               chan interface{}
+	listenerLock       sync.Mutex
+	listenerWg         sync.WaitGroup
+	listeners          map[string]*listener.Listener
+	reservations       *handlers.Reservations
 }
 
 func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int) (*Proxy, error) {

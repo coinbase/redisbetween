@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/messenger"
 	"github.com/coinbase/redisbetween/redis"
 	"go.uber.org/zap"
 )
@@ -31,7 +30,7 @@ type blocker struct {
 
 	ctx       context.Context
 	upstream  pool.ConnectionWrapper
-	messenger messenger.Messenger
+	messenger redis.Messenger
 	queue     []*blockingCommand
 	parent    *Reservations
 
@@ -337,7 +336,7 @@ func (b *blocker) roundTrip(cmd *blockingCommand) error {
 	}
 
 	if isClusterResponse(res) {
-		err = fmt.Errorf("blocking commands aren't supported for Redis cluster")
+		err = fmt.Errorf("blocking commands aren't supported for Client cluster")
 		mm := []*redis.Message{redis.NewError([]byte(fmt.Sprintf("redisbetween: %v", err.Error())))}
 		if err := b.localWrite(cmd.local, mm); err != nil {
 			b.log.Error("local write error", zap.Error(err))

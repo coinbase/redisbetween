@@ -2,11 +2,12 @@ package proxy
 
 import (
 	"context"
+	redis2 "github.com/coinbase/redisbetween/redis"
+	"github.com/coinbase/redisbetween/utils"
 	"strconv"
 	"sync"
 	"testing"
 
-	"github.com/coinbase/redisbetween/messenger"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )
@@ -17,7 +18,7 @@ import (
 func TestProxy(t *testing.T) {
 	sd := SetupProxy(t, "7006", -1)
 
-	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7006.sock")
+	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
 	assert.NoError(t, res.Err())
 	res = client.Do(context.Background(), "set", "hello", "world")
@@ -38,7 +39,7 @@ type command struct {
 
 func TestIntegrationCommands(t *testing.T) {
 	shutdownProxy := SetupProxy(t, "7000", -1)
-	clusterClient := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7000.sock", false, 1)
+	clusterClient := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7000.sock", false, 1)
 	var i int
 	var wg sync.WaitGroup
 	for {
@@ -68,14 +69,14 @@ func TestIntegrationCommands(t *testing.T) {
 
 func TestPipelinedCommands(t *testing.T) {
 	shutdownProxy := SetupProxy(t, "7006", 3)
-	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7006-3.sock")
+	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7006-3.sock")
 	var i int
 	var wg sync.WaitGroup
 	for {
 		go func(index int, t *testing.T) {
 			var j int
 			ind := strconv.Itoa(index)
-			commands := []command{{cmd: "get", args: []string{string(messenger.PipelineSignalStartKey)}, res: "get 🔜: redis: nil"}}
+			commands := []command{{cmd: "get", args: []string{string(redis2.PipelineSignalStartKey)}, res: "get 🔜: redis: nil"}}
 			for {
 				j++
 				if j == 20 {
@@ -85,7 +86,7 @@ func TestPipelinedCommands(t *testing.T) {
 				commands = append(commands, command{cmd: "set", args: []string{s, "hi"}, res: "set " + s + " hi: OK"})
 				commands = append(commands, command{cmd: "get", args: []string{s}, res: "get " + s + ": hi"})
 			}
-			commands = append(commands, command{cmd: "get", args: []string{string(messenger.PipelineSignalEndKey)}, res: "get 🔚: redis: nil"})
+			commands = append(commands, command{cmd: "get", args: []string{string(redis2.PipelineSignalEndKey)}, res: "get 🔚: redis: nil"})
 			assertResponsePipelined(t, commands, client)
 			wg.Done()
 		}(i, t)
@@ -101,7 +102,7 @@ func TestPipelinedCommands(t *testing.T) {
 
 func TestDbSelectCommand(t *testing.T) {
 	shutdown := SetupProxy(t, "7006", 3)
-	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7006-3.sock")
+	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7006-3.sock")
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
 	assert.Contains(t, res.String(), "db=3")
@@ -110,7 +111,7 @@ func TestDbSelectCommand(t *testing.T) {
 
 func TestReadonlyCommand(t *testing.T) {
 	shutdown := SetupProxyAdvancedConfig(t, "7000", -1, 1, 1, true)
-	client := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+RedisHost()+"-7000-ro.sock", true, 1)
+	client := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7000-ro.sock", true, 1)
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
 	assert.Contains(t, res.String(), "flags=r")

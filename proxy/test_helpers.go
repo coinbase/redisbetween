@@ -4,25 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
+	"github.com/coinbase/redisbetween/utils"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
-
-func RedisHost() string {
-	h := os.Getenv("REDIS_HOST")
-	if h != "" {
-		return h
-	}
-	return "127.0.0.1"
-}
 
 func SetupProxy(t *testing.T, upstreamPort string, db int) func() {
 	return SetupProxyAdvancedConfig(t, upstreamPort, db, 1, 1, false)
@@ -31,7 +23,7 @@ func SetupProxy(t *testing.T, upstreamPort string, db int) func() {
 func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPoolSize int, id int, readonly bool) func() {
 	t.Helper()
 
-	uri := RedisHost() + ":" + upstreamPort
+	uri := utils.RedisHost() + ":" + upstreamPort
 
 	sd, err := statsd.New("localhost:8125")
 	assert.NoError(t, err)

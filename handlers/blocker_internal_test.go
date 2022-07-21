@@ -279,7 +279,7 @@ func TestClusteredRedis(t *testing.T) {
 
 	// Ensure the error message was written to the local
 	written := msgr.peekMessages(createLocalAddressForMock(0))
-	expectedErr := fmt.Errorf("blocking commands aren't supported for Redis cluster")
+	expectedErr := fmt.Errorf("blocking commands aren't supported for Client cluster")
 	expectedMsg := []*redis.Message{redis.NewError([]byte(fmt.Sprintf("redisbetween: %v", expectedErr.Error())))}
 	assert.True(t, redisArraysEqual(written[1], expectedMsg))
 }
