@@ -18,6 +18,8 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const disconnectTimeout = 10 * time.Second
+
 func main() {
 	c := config.ParseFlags()
 	log := newLogger(c.Level, c.Pretty)
@@ -62,8 +64,9 @@ func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
 
 func run(ctx context.Context, cfg *config.Config) error {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+	sd := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface)
 
-	proxies, err := proxies(ctx, cfg)
+	proxies, upstreams, err := proxies(ctx, cfg)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -77,7 +80,8 @@ func run(ctx context.Context, cfg *config.Config) error {
 		p := p
 		wg.Add(1)
 		go func() {
-			err := p.Run()
+			c := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, sd)
+			err := p.Run(c)
 			if err != nil {
 				log.Error("Error", zap.Error(err))
 			}
@@ -89,10 +93,22 @@ func run(ctx context.Context, cfg *config.Config) error {
 		for _, p := range proxies {
 			p.Shutdown()
 		}
+
+		for _, u := range upstreams {
+			ctx, cancel := context.WithTimeout(ctx, disconnectTimeout)
+			_ = u.Close(ctx)
+			cancel()
+		}
 	}
 	kill := func() {
 		for _, p := range proxies {
 			p.Kill()
+		}
+
+		for _, u := range upstreams {
+			ctx, cancel := context.WithTimeout(ctx, disconnectTimeout)
+			_ = u.Close(ctx)
+			cancel()
 		}
 	}
 	shutdownOnSignal(log, shutdown, kill)
@@ -102,21 +118,27 @@ func run(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func proxies(ctx context.Context, c *config.Config) (proxies []*proxy.Proxy, err error) {
+func proxies(ctx context.Context, c *config.Config) (proxies []*proxy.Proxy, upstreams map[string]redis.ClientInterface, err error) {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
-	upstreams := make(map[string]redis.ClientInterface)
+	upstreams = make(map[string]redis.ClientInterface)
 
 	validUpstreams := make([]config.Upstream, len(c.Upstreams))
 
 	for _, u := range c.Upstreams {
-		client, err := redis.NewClient(ctx, &redis.Options{Addr: u.UpstreamConfigHost})
+		l := log.With(zap.String("label", u.Label), zap.String("address", u.Address))
+		if _, ok := upstreams[u.Address]; ok {
+			l.Debug("Upstream already initialized")
+			continue
+		}
+
+		client, err := redis.NewClient(ctx, &redis.Options{Addr: u.Address})
 
 		if err != nil {
-			log.Error("Failed to connect to upstream", zap.Error(err), zap.String("label", u.Label), zap.String("address", u.UpstreamConfigHost))
+			l.Error("Failed to connect to upstream", zap.Error(err))
 			continue
 		}
 		validUpstreams = append(validUpstreams, u)
-		upstreams[u.UpstreamConfigHost] = client
+		upstreams[u.Address] = client
 	}
 
 	redisLookup := func(addr string) redis.ClientInterface {
@@ -125,13 +147,14 @@ func proxies(ctx context.Context, c *config.Config) (proxies []*proxy.Proxy, err
 
 	for _, u := range validUpstreams {
 		p, err := proxy.NewProxy(
-			ctx, c, u.Label, u.UpstreamConfigHost, u.Database,
+			ctx, c, u.Label, u.Address, u.Database,
 			u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout,
 			u.Readonly, u.MaxSubscriptions, u.MaxBlockers, redisLookup,
+			u.RequestMirrorPolicy,
 		)
 
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		proxies = append(proxies, p)
 	}

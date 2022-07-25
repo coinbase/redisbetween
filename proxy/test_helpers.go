@@ -17,14 +17,12 @@ import (
 	"go.uber.org/zap"
 )
 
-func SetupProxy(t *testing.T, upstreamPort string, db int) func() {
-	return SetupProxyAdvancedConfig(t, upstreamPort, db, 1, 1, false)
+func SetupProxy(t *testing.T, upstreamPort string, db int, mirroring *config.RequestMirrorPolicy) func() {
+	return SetupProxyAdvancedConfig(t, utils.RedisHost()+":"+upstreamPort, db, 1, 1, false, mirroring)
 }
 
-func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPoolSize int, id int, readonly bool) func() {
+func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize int, id int, readonly bool, mirroring *config.RequestMirrorPolicy) func() {
 	t.Helper()
-
-	uri := utils.RedisHost() + ":" + upstreamPort
 
 	sd, err := statsd.New("localhost:8125")
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
@@ -37,14 +35,25 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 		Unlink:            true,
 	}
 
-	client, _ := redis2.NewClient(ctx, &redis2.Options{Addr: uri})
-	lookup := func(string) redis2.ClientInterface {
-		return client
+	upstreams := make(map[string]redis2.ClientInterface)
+	client, _ := redis2.NewClient(ctx, &redis2.Options{Addr: upstream})
+	upstreams[upstream] = client
+	if mirroring != nil {
+		mirror, _ := redis2.NewClient(ctx, &redis2.Options{Addr: mirroring.Upstream})
+		upstreams[mirroring.Upstream] = mirror
 	}
-	proxy, err := NewProxy(ctx, cfg, "test", uri, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1, lookup)
+	lookup := func(addr string) redis2.ClientInterface {
+		if r, ok := upstreams[addr]; ok {
+			return r
+		}
+
+		t.Fatal("Failed to find upstream", addr)
+		return nil
+	}
+	proxy, err := NewProxy(ctx, cfg, "test", upstream, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1, lookup, mirroring)
 	assert.NoError(t, err)
 	go func() {
-		err := proxy.Run()
+		err := proxy.Run(context.Background())
 		assert.NoError(t, err)
 	}()
 

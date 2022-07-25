@@ -57,14 +57,14 @@ func TestParseFlags(t *testing.T) {
 	}
 
 	assert.Equal(t, "cluster1", upstream1.Label)
-	assert.Equal(t, "localhost:7000", upstream1.UpstreamConfigHost)
+	assert.Equal(t, "localhost:7000", upstream1.Address)
 	assert.Equal(t, 5, upstream1.MinPoolSize)
 	assert.Equal(t, 0, upstream1.Database)
 	assert.Equal(t, 5*time.Second, upstream1.ReadTimeout)
 	assert.Equal(t, 5*time.Second, upstream1.WriteTimeout)
 
 	assert.Equal(t, "cluster2", upstream2.Label)
-	assert.Equal(t, "localhost:7002", upstream2.UpstreamConfigHost)
+	assert.Equal(t, "localhost:7002", upstream2.Address)
 	assert.Equal(t, 10, upstream2.MinPoolSize)
 	assert.Equal(t, 3*time.Second, upstream2.ReadTimeout)
 	assert.Equal(t, 6*time.Second, upstream2.WriteTimeout)

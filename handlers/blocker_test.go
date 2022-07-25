@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/coinbase/redisbetween/proxy"
+	"github.com/coinbase/redisbetween/utils"
 	"math/rand"
 	"sync"
 	"testing"
@@ -23,7 +24,7 @@ func TestBasicBRPOPLPUSH(t *testing.T) {
 
 	// Setup
 	id := randomInteger()
-	sd := proxy.SetupProxyAdvancedConfig(t, "7006", -1, 2, id, false)
+	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 	client := setupStandaloneClient(t, id)
 
 	defer sd()
@@ -74,7 +75,7 @@ func TestMultipleBlockingClients(t *testing.T) {
 
 	// Setup
 	id := randomInteger()
-	sd := proxy.SetupProxyAdvancedConfig(t, "7006", -1, 2, id, false)
+	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 
 	defer sd()
 

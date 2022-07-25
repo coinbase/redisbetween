@@ -25,13 +25,13 @@ import (
 )
 
 const restartSleep = 1 * time.Second
-const disconnectTimeout = 10 * time.Second
 
 type Proxy struct {
 	log                *zap.Logger
 	statsd             *statsd.Client
 	config             *config.Config
 	redisLookup        handlers.RedisLookup
+	requestMirroring   *config.RequestMirrorPolicy
 	upstreamConfigHost string
 	localConfigHost    string
 	maxPoolSize        int
@@ -48,7 +48,7 @@ type Proxy struct {
 	reservations       *handlers.Reservations
 }
 
-func NewProxy(ctx context.Context, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int, redisLookup handlers.RedisLookup) (*Proxy, error) {
+func NewProxy(ctx context.Context, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int, redisLookup handlers.RedisLookup, requestMirroring *config.RequestMirrorPolicy) (*Proxy, error) {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
 
@@ -75,6 +75,7 @@ func NewProxy(ctx context.Context, config *config.Config, label, upstreamHost st
 		database:           database,
 		readonly:           readonly,
 		redisLookup:        redisLookup,
+		requestMirroring:   requestMirroring,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -84,8 +85,8 @@ func NewProxy(ctx context.Context, config *config.Config, label, upstreamHost st
 	}, nil
 }
 
-func (p *Proxy) Run() error {
-	return p.run()
+func (p *Proxy) Run(ctx context.Context) error {
+	return p.run(ctx)
 }
 
 func (p *Proxy) Shutdown() {
@@ -115,7 +116,7 @@ func (p *Proxy) Kill() {
 	close(p.kill)
 }
 
-func (p *Proxy) run() error {
+func (p *Proxy) run(ctx context.Context) error {
 	defer func() {
 		if r := recover(); r != nil {
 			p.log.Error("Crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -124,7 +125,7 @@ func (p *Proxy) run() error {
 
 			p.log.Info("Restarting", zap.Duration("sleep", restartSleep))
 			go func() {
-				err := p.run()
+				err := p.run(ctx)
 				if err != nil {
 					p.log.Error("Error restarting", zap.Error(err))
 				}
@@ -246,7 +247,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, kill, p.quit, p.interceptMessages, p.reservations, p.redisLookup)
+		handlers.CommandConnection(log, p.statsd, conn, local, upstream, p.readTimeout, p.writeTimeout, id, kill, p.quit, p.interceptMessages, p.reservations, p.redisLookup, p.requestMirroring)
 	}
 
 	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, func() {})

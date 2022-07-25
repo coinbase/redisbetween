@@ -29,27 +29,39 @@ type Config struct {
 	Pretty            bool
 	Statsd            string
 	Level             zapcore.Level
+	Listeners         []ListenerConfig
 	Upstreams         []Upstream
 }
 
+type ListenerConfig struct {
+	Name              string
+	Network           string
+	Address           string
+	LocalSocketPrefix string
+	LocalSocketSuffix string
+	Level             zapcore.Level
+	Target            string
+	MaxSubscriptions  int
+	MaxBlockers       int
+	Mirroring         RequestMirrorPolicy
+}
+
 type Upstream struct {
-	UpstreamConfigHost  string
 	Label               string
+	Address             string
+	Database            int
 	MaxPoolSize         int
 	MinPoolSize         int
-	Database            int
 	ReadTimeout         time.Duration
 	WriteTimeout        time.Duration
 	Readonly            bool
 	MaxSubscriptions    int
 	MaxBlockers         int
-	RequestMirrorPolicy RequestMirrorPolicy
+	RequestMirrorPolicy *RequestMirrorPolicy
 }
 
 type RequestMirrorPolicy struct {
-	UpstreamLabel string
-	ExcludeRead   bool
-	ExcludeWrite  bool
+	Upstream string
 }
 
 func ParseFlags() *Config {
@@ -140,16 +152,22 @@ func parseFlags() (*Config, error) {
 			}
 
 			us := Upstream{
-				UpstreamConfigHost: u.Host,
-				Label:              getStringParam(params, "label", ""),
-				MaxPoolSize:        getIntParam(params, "maxpoolsize", 10),
-				MinPoolSize:        getIntParam(params, "minpoolsize", 1),
-				Database:           db,
-				ReadTimeout:        rt,
-				WriteTimeout:       wt,
-				Readonly:           getBoolParam(params, "readonly"),
-				MaxSubscriptions:   getIntParam(params, "maxsubscriptions", 1),
-				MaxBlockers:        getIntParam(params, "maxblockers", 1),
+				Address:          u.Host,
+				Label:            getStringParam(params, "label", ""),
+				MaxPoolSize:      getIntParam(params, "maxpoolsize", 10),
+				MinPoolSize:      getIntParam(params, "minpoolsize", 1),
+				Database:         db,
+				ReadTimeout:      rt,
+				WriteTimeout:     wt,
+				Readonly:         getBoolParam(params, "readonly"),
+				MaxSubscriptions: getIntParam(params, "maxsubscriptions", 1),
+				MaxBlockers:      getIntParam(params, "maxblockers", 1),
+			}
+
+			if h := getStringParam(params, "requestMirrorUpstream", ""); len(h) > 0 {
+				us.RequestMirrorPolicy = &RequestMirrorPolicy{
+					Upstream: h,
+				}
 			}
 
 			upstreams = append(upstreams, us)
@@ -162,13 +180,13 @@ func parseFlags() (*Config, error) {
 
 	addrMap := make(map[string]bool)
 	for _, c := range upstreams {
-		key := c.UpstreamConfigHost + "/" + strconv.Itoa(c.Database)
+		key := c.Address + "/" + strconv.Itoa(c.Database)
 		if c.Readonly {
 			key += "-readonly"
 		}
 		_, ok := addrMap[key]
 		if ok {
-			return nil, fmt.Errorf("duplicate entry for address: %v", c.UpstreamConfigHost)
+			return nil, fmt.Errorf("duplicate entry for address: %v", c.Address)
 		}
 		addrMap[key] = true
 	}

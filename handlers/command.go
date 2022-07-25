@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/utils"
 	"io"
 	"net"
@@ -23,26 +24,28 @@ type RedisLookup func(addr string) redis.ClientInterface
 type connection struct {
 	sync.Mutex
 
-	log          *zap.Logger
-	statsd       *statsd.Client
-	ctx          context.Context
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	conn         net.Conn
-	address      string
-	id           uint64
-	kill         chan interface{}
-	quit         chan interface{}
-	interceptor  MessageInterceptor
-	messenger    redis.Messenger
-	reservations *Reservations
-	isClosed     bool
-	redisLookup  RedisLookup
+	log              *zap.Logger
+	statsd           *statsd.Client
+	ctx              context.Context
+	readTimeout      time.Duration
+	writeTimeout     time.Duration
+	conn             net.Conn
+	address          string
+	upstream         string
+	id               uint64
+	kill             chan interface{}
+	quit             chan interface{}
+	interceptor      MessageInterceptor
+	messenger        redis.Messenger
+	reservations     *Reservations
+	isClosed         bool
+	redisLookup      RedisLookup
+	requestMirroring *config.RequestMirrorPolicy
 }
 
 type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, readTimeout, writeTimeout time.Duration, id uint64, kill chan interface{}, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, redisLookup RedisLookup) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, upstream string, readTimeout, writeTimeout time.Duration, id uint64, kill, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, redisLookup RedisLookup, requestMirroring *config.RequestMirrorPolicy) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -50,18 +53,20 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, addres
 	}()
 
 	c := connection{
-		log:          log,
-		statsd:       sd,
-		ctx:          context.Background(),
-		conn:         conn,
-		address:      address,
-		id:           id,
-		kill:         kill,
-		quit:         quit,
-		interceptor:  interceptor,
-		messenger:    redis.WireMessenger{},
-		reservations: reservations,
-		redisLookup:  redisLookup,
+		log:              log,
+		statsd:           sd,
+		ctx:              context.Background(),
+		conn:             conn,
+		address:          address,
+		upstream:         upstream,
+		id:               id,
+		kill:             kill,
+		quit:             quit,
+		interceptor:      interceptor,
+		messenger:        redis.WireMessenger{},
+		reservations:     reservations,
+		redisLookup:      redisLookup,
+		requestMirroring: requestMirroring,
 	}
 
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, sd)
@@ -129,13 +134,21 @@ func (c *connection) handleMessage(ctx context.Context) error {
 			return err
 		}
 	} else {
-		client := c.redisLookup(c.address)
-		if wm, err = client.Call(ctx, wm); err != nil {
+		client := c.redisLookup(c.upstream)
+
+		var res []*redis.Message
+		if res, err = client.Call(ctx, wm); err != nil {
 			return err
 		}
-		c.interceptor(incomingCmds, wm)
+		c.interceptor(incomingCmds, res)
+		err = c.messenger.Write(c.ctx, log, res, c.conn, c.address, c.id, 0, len(res) > 1, c.conn.Close)
 
-		err = c.messenger.Write(c.ctx, log, wm, c.conn, c.address, c.id, 0, len(wm) > 1, c.conn.Close)
+		if c.requestMirroring != nil {
+			client = c.redisLookup(c.requestMirroring.Upstream)
+			if _, e := client.Call(ctx, wm); e != nil {
+				log.Error("Failed to call mirror client", zap.Error(e), zap.String("upstream", c.requestMirroring.Upstream))
+			}
+		}
 	}
 
 	return err
@@ -216,6 +229,6 @@ func (c *connection) Closed() bool {
 
 func (c *connection) checkoutConnection() (pool.ConnectionWrapper, error) {
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, c.log), utils.CtxStatsdKey, c.statsd)
-	client := c.redisLookup(c.address)
+	client := c.redisLookup(c.upstream)
 	return client.CheckoutConnection(ctx)
 }

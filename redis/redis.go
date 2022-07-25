@@ -34,6 +34,7 @@ type Client struct {
 type ClientInterface interface {
 	Call(ctx context.Context, msg []*Message) ([]*Message, error)
 	CheckoutConnection(ctx context.Context) (conn pool.ConnectionWrapper, err error)
+	Close(ctx context.Context) error
 }
 
 // NewClient opens a connection pool to the redis server

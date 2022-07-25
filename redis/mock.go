@@ -9,6 +9,10 @@ type client struct {
 	server pool.ServerWrapper
 }
 
+func (c client) Close(ctx context.Context) error {
+	return nil
+}
+
 func (c client) Call(ctx context.Context, msg []*Message) ([]*Message, error) {
 	panic("implement me")
 }
