@@ -66,7 +66,17 @@ func run(ctx context.Context, cfg *config.Config) error {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface)
 
-	proxies, upstreams, err := proxies(ctx, cfg)
+	upstreams, err := upstreams(ctx, cfg)
+	if err != nil {
+		log.Error("Failed to initialized upstreams")
+		return err
+	}
+
+	upstreamLookup := func(addr string) redis.ClientInterface {
+		return upstreams[addr]
+	}
+
+	proxies, err := proxies(ctx, cfg, upstreamLookup)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -118,43 +128,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func proxies(ctx context.Context, c *config.Config) (proxies []*proxy.Proxy, upstreams map[string]redis.ClientInterface, err error) {
-	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
-	upstreams = make(map[string]redis.ClientInterface)
-
-	validUpstreams := make([]config.Upstream, len(c.Upstreams))
-
-	for _, u := range c.Upstreams {
-		l := log.With(zap.String("label", u.Label), zap.String("address", u.Address))
-		if _, ok := upstreams[u.Address]; ok {
-			l.Debug("Upstream already initialized")
-			continue
-		}
-
-		client, err := redis.NewClient(ctx, &redis.Options{Addr: u.Address})
+func proxies(ctx context.Context, c *config.Config, lookup func(addr string) redis.ClientInterface) (proxies []*proxy.Proxy, err error) {
+	for _, u := range c.Listeners {
+		p, err := proxy.NewProxy(ctx, c, u, lookup)
 
 		if err != nil {
-			l.Error("Failed to connect to upstream", zap.Error(err))
-			continue
-		}
-		validUpstreams = append(validUpstreams, u)
-		upstreams[u.Address] = client
-	}
-
-	redisLookup := func(addr string) redis.ClientInterface {
-		return upstreams[addr]
-	}
-
-	for _, u := range validUpstreams {
-		p, err := proxy.NewProxy(
-			ctx, c, u.Label, u.Address, u.Database,
-			u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout,
-			u.Readonly, u.MaxSubscriptions, u.MaxBlockers, redisLookup,
-			u.RequestMirrorPolicy,
-		)
-
-		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		proxies = append(proxies, p)
 	}
@@ -187,4 +166,36 @@ func shutdownOnSignal(log *zap.Logger, shutdownFunc func(), killFunc func()) {
 			}
 		}
 	}()
+}
+
+func upstreams(ctx context.Context, c *config.Config) (map[string]redis.ClientInterface, error) {
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+
+	upstreams := make(map[string]redis.ClientInterface)
+
+	for _, u := range c.Upstreams {
+		l := log.With(zap.String("label", u.Name), zap.String("address", u.Address))
+		if _, ok := upstreams[u.Address]; ok {
+			l.Debug("Upstream already initialized")
+			continue
+		}
+
+		client, err := redis.NewClient(ctx, &redis.Options{
+			Addr:         u.Address,
+			Database:     u.Database,
+			MinPoolSize:  u.MinPoolSize,
+			MaxPoolSize:  u.MaxPoolSize,
+			Readonly:     u.Readonly,
+			ReadTimeout:  u.ReadTimeout,
+			WriteTimeout: u.WriteTimeout,
+		})
+
+		if err != nil {
+			l.Error("Failed to connect to upstream", zap.Error(err))
+			continue
+		}
+		upstreams[u.Name] = client
+	}
+
+	return upstreams, nil
 }

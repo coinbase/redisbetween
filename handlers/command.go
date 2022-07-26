@@ -45,7 +45,7 @@ type connection struct {
 
 type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, upstream string, readTimeout, writeTimeout time.Duration, id uint64, kill, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, redisLookup RedisLookup, requestMirroring *config.RequestMirrorPolicy) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, upstream string, id uint64, kill, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, redisLookup RedisLookup, listenerCfg *config.Listener) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -66,7 +66,7 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, addres
 		messenger:        redis.WireMessenger{},
 		reservations:     reservations,
 		redisLookup:      redisLookup,
-		requestMirroring: requestMirroring,
+		requestMirroring: listenerCfg.Mirroring,
 	}
 
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, sd)

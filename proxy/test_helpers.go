@@ -28,16 +28,35 @@ func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
 	assert.NoError(t, err)
 
-	cfg := &config.Config{
+	l := &config.Listener{
 		Network:           "unix",
 		LocalSocketPrefix: fmt.Sprintf("/var/tmp/redisbetween-%d-", id),
 		LocalSocketSuffix: ".sock",
 		Unlink:            true,
+		Mirroring:         mirroring,
+		Target:            "test",
+		MaxSubscriptions:  1,
+		MaxBlockers:       1,
+	}
+	u := &config.Upstream{
+		Name:         "test",
+		Address:      upstream,
+		Database:     db,
+		MinPoolSize:  1,
+		MaxPoolSize:  maxPoolSize,
+		Readonly:     readonly,
+		ReadTimeout:  1 * time.Second,
+		WriteTimeout: 1 * time.Second,
+	}
+
+	cfg := &config.Config{
+		Upstreams: []*config.Upstream{u},
+		Listeners: []*config.Listener{l},
 	}
 
 	upstreams := make(map[string]redis2.ClientInterface)
 	client, _ := redis2.NewClient(ctx, &redis2.Options{Addr: upstream})
-	upstreams[upstream] = client
+	upstreams["test"] = client
 	if mirroring != nil {
 		mirror, _ := redis2.NewClient(ctx, &redis2.Options{Addr: mirroring.Upstream})
 		upstreams[mirroring.Upstream] = mirror
@@ -50,7 +69,7 @@ func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize
 		t.Fatal("Failed to find upstream", addr)
 		return nil
 	}
-	proxy, err := NewProxy(ctx, cfg, "test", upstream, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1, lookup, mirroring)
+	proxy, err := NewProxy(ctx, cfg, l, lookup)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run(context.Background())

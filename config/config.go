@@ -20,44 +20,35 @@ const defaultStatsdAddress = "localhost:8125"
 var validNetworks = []string{"tcp", "tcp4", "tcp6", "unix", "unixpacket"}
 
 type Config struct {
-	Network           string
-	LocalSocketPrefix string
-	LocalSocketSuffix string
-	Unlink            bool
-	MinPoolSize       uint64
-	MaxPoolSize       uint64
-	Pretty            bool
-	Statsd            string
-	Level             zapcore.Level
-	Listeners         []ListenerConfig
-	Upstreams         []Upstream
+	Pretty    bool
+	Statsd    string
+	Level     zapcore.Level
+	Listeners []*Listener
+	Upstreams []*Upstream
 }
 
-type ListenerConfig struct {
+type Listener struct {
 	Name              string
 	Network           string
-	Address           string
 	LocalSocketPrefix string
 	LocalSocketSuffix string
-	Level             zapcore.Level
+	LogLevel          zapcore.Level
 	Target            string
 	MaxSubscriptions  int
 	MaxBlockers       int
-	Mirroring         RequestMirrorPolicy
+	Unlink            bool
+	Mirroring         *RequestMirrorPolicy
 }
 
 type Upstream struct {
-	Label               string
-	Address             string
-	Database            int
-	MaxPoolSize         int
-	MinPoolSize         int
-	ReadTimeout         time.Duration
-	WriteTimeout        time.Duration
-	Readonly            bool
-	MaxSubscriptions    int
-	MaxBlockers         int
-	RequestMirrorPolicy *RequestMirrorPolicy
+	Name         string
+	Address      string
+	Database     int
+	MaxPoolSize  int
+	MinPoolSize  int
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	Readonly     bool
 }
 
 type RequestMirrorPolicy struct {
@@ -89,12 +80,8 @@ func parseFlags() (*Config, error) {
 		flag.PrintDefaults()
 	}
 
-	var network, localSocketPrefix, localSocketSuffix, stats, loglevel string
-	var pretty, unlink bool
-	flag.StringVar(&network, "network", "unix", "One of: tcp, tcp4, tcp6, unix or unixpacket")
-	flag.StringVar(&localSocketPrefix, "localsocketprefix", "/var/tmp/redisbetween-", "Prefix to use for unix socket filenames")
-	flag.StringVar(&localSocketSuffix, "localsocketsuffix", ".sock", "Suffix to use for unix socket filenames")
-	flag.BoolVar(&unlink, "unlink", false, "Unlink existing unix sockets before listening")
+	var stats, loglevel string
+	var pretty bool
 	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
@@ -114,11 +101,8 @@ func parseFlags() (*Config, error) {
 		}
 	}
 
-	if !validNetwork(network) {
-		return nil, fmt.Errorf("invalid network: %s", network)
-	}
-
-	var upstreams []Upstream
+	var upstreams []*Upstream
+	var listeners []*Listener
 	for _, arg := range flag.Args() {
 		all := strings.FieldsFunc(arg, func(r rune) bool {
 			return r == '|' || r == '\n'
@@ -129,53 +113,28 @@ func parseFlags() (*Config, error) {
 				return nil, err
 			}
 
-			db := -1
-			if len(u.Path) > 1 {
-				db, err = strconv.Atoi(u.Path[1:])
+			if u.Scheme == "redis" {
+				us, err := parseUpstream(u)
 				if err != nil {
-					return nil, errors.New("failed to parse redis db number from path")
+					return nil, err
 				}
-			}
-
-			params, err := url.ParseQuery(u.RawQuery)
-			if err != nil {
-				return nil, err
-			}
-
-			rt, err := time.ParseDuration(getStringParam(params, "readtimeout", "5s"))
-			if err != nil {
-				return nil, err
-			}
-			wt, err := time.ParseDuration(getStringParam(params, "writetimeout", "5s"))
-			if err != nil {
-				return nil, err
-			}
-
-			us := Upstream{
-				Address:          u.Host,
-				Label:            getStringParam(params, "label", ""),
-				MaxPoolSize:      getIntParam(params, "maxpoolsize", 10),
-				MinPoolSize:      getIntParam(params, "minpoolsize", 1),
-				Database:         db,
-				ReadTimeout:      rt,
-				WriteTimeout:     wt,
-				Readonly:         getBoolParam(params, "readonly"),
-				MaxSubscriptions: getIntParam(params, "maxsubscriptions", 1),
-				MaxBlockers:      getIntParam(params, "maxblockers", 1),
-			}
-
-			if h := getStringParam(params, "requestMirrorUpstream", ""); len(h) > 0 {
-				us.RequestMirrorPolicy = &RequestMirrorPolicy{
-					Upstream: h,
+				upstreams = append(upstreams, us)
+			} else {
+				ls, err := parseListener(u)
+				if err != nil {
+					return nil, err
 				}
+				listeners = append(listeners, ls)
 			}
-
-			upstreams = append(upstreams, us)
 		}
 	}
 
 	if len(upstreams) == 0 {
 		return nil, errors.New("missing list of upstream hosts")
+	}
+
+	if len(listeners) == 0 {
+		return nil, errors.New("missing list of listeners")
 	}
 
 	addrMap := make(map[string]bool)
@@ -192,15 +151,94 @@ func parseFlags() (*Config, error) {
 	}
 
 	return &Config{
-		Upstreams:         upstreams,
-		Network:           network,
-		LocalSocketPrefix: localSocketPrefix,
-		LocalSocketSuffix: localSocketSuffix,
-		Unlink:            unlink,
-		Pretty:            pretty,
-		Statsd:            stats,
-		Level:             level,
+		Upstreams: upstreams,
+		Listeners: listeners,
+		Pretty:    pretty,
+		Statsd:    stats,
+		Level:     level,
 	}, nil
+}
+
+func parseUpstream(u *url.URL) (*Upstream, error) {
+	var err error
+
+	db := -1
+	if len(u.Path) > 1 {
+		db, err = strconv.Atoi(u.Path[1:])
+		if err != nil {
+			return nil, errors.New("failed to parse redis db number from path")
+		}
+	}
+
+	params, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	rt, err := time.ParseDuration(getStringParam(params, "readtimeout", "5s"))
+	if err != nil {
+		return nil, err
+	}
+
+	wt, err := time.ParseDuration(getStringParam(params, "writetimeout", "5s"))
+	if err != nil {
+		return nil, err
+	}
+
+	upstream := Upstream{
+		Address:      u.Host,
+		Name:         getStringParam(params, "label", ""),
+		MaxPoolSize:  getIntParam(params, "maxpoolsize", 10),
+		MinPoolSize:  getIntParam(params, "minpoolsize", 1),
+		Database:     db,
+		ReadTimeout:  rt,
+		WriteTimeout: wt,
+		Readonly:     getBoolParam(params, "readonly"),
+	}
+
+	return &upstream, nil
+}
+
+func parseListener(u *url.URL) (*Listener, error) {
+	var err error
+
+	if !validNetwork(u.Scheme) {
+		return nil, fmt.Errorf("invalid network: %s", u.Scheme)
+	}
+
+	params, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	level := zap.InfoLevel
+	loglevel := getStringParam(params, "loglevel", "")
+	if loglevel != "" {
+		err := level.Set(loglevel)
+		if err != nil {
+			return nil, fmt.Errorf("invalid loglevel: %s", loglevel)
+		}
+	}
+
+	listener := Listener{
+		Network:           u.Scheme,
+		Name:              getStringParam(params, "label", ""),
+		LocalSocketPrefix: getStringParam(params, "localsocketprefix", "/var/tmp/redisbetween-"),
+		LocalSocketSuffix: getStringParam(params, "localsocketsuffix", ".sock"),
+		Target:            getStringParam(params, "target", ""),
+		MaxSubscriptions:  getIntParam(params, "maxsubscriptions", 1),
+		MaxBlockers:       getIntParam(params, "maxblockers", 1),
+		Unlink:            getBoolParam(params, "unlink"),
+		LogLevel:          level,
+	}
+
+	if h := getStringParam(params, "mirrorTarget", ""); len(h) > 0 {
+		listener.Mirroring = &RequestMirrorPolicy{
+			Upstream: h,
+		}
+	}
+
+	return &listener, nil
 }
 
 func getStringParam(v url.Values, key, def string) string {

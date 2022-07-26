@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"github.com/coinbase/redisbetween/utils"
 	"net"
@@ -27,61 +28,64 @@ import (
 const restartSleep = 1 * time.Second
 
 type Proxy struct {
-	log                *zap.Logger
-	statsd             *statsd.Client
-	config             *config.Config
-	redisLookup        handlers.RedisLookup
-	requestMirroring   *config.RequestMirrorPolicy
-	upstreamConfigHost string
-	localConfigHost    string
-	maxPoolSize        int
-	minPoolSize        int
-	readTimeout        time.Duration
-	writeTimeout       time.Duration
-	database           int
-	readonly           bool
-	quit               chan interface{}
-	kill               chan interface{}
-	listenerLock       sync.Mutex
-	listenerWg         sync.WaitGroup
-	listeners          map[string]*listener.Listener
-	reservations       *handlers.Reservations
+	log            *zap.Logger
+	statsd         *statsd.Client
+	listenerConfig *config.Listener
+	upstreamConfig *config.Upstream
+	redisLookup    handlers.RedisLookup
+	localHost      string
+	quit           chan interface{}
+	kill           chan interface{}
+	listenerLock   sync.Mutex
+	listenerWg     sync.WaitGroup
+	listeners      map[string]*listener.Listener
+	reservations   *handlers.Reservations
 }
 
-func NewProxy(ctx context.Context, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int, redisLookup handlers.RedisLookup, requestMirroring *config.RequestMirrorPolicy) (*Proxy, error) {
+func NewProxy(ctx context.Context, cfg *config.Config, listenerConfig *config.Listener, lookup handlers.RedisLookup) (*Proxy, error) {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
 
-	if label != "" {
-		log = log.With(zap.String("cluster", label))
+	// Make a local copy of the config
+	listenerCfg := &config.Listener{}
+	*listenerCfg = *listenerConfig
+
+	if listenerCfg.Name != "" {
+		log = log.With(zap.String("cluster", listenerCfg.Name))
 
 		var err error
-		sd, err = util.StatsdWithTags(sd, []string{fmt.Sprintf("cluster:%s", label)})
+		sd, err = util.StatsdWithTags(sd, []string{fmt.Sprintf("cluster:%s", listenerCfg.Name)})
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	upstreamCfg := &config.Upstream{}
+	for _, u := range cfg.Upstreams {
+		if u.Name == listenerCfg.Target {
+			*upstreamCfg = *u
+		}
+	}
+
+	if upstreamCfg == nil {
+		log.Error("Missing upstream in config", zap.String("target", listenerCfg.Target))
+		return nil, errors.New("MISSING_UPSTREAM")
+	}
+
+	localHost := localSocketPathFromUpstream(upstreamCfg.Address, upstreamCfg.Database, upstreamCfg.Readonly, listenerCfg.LocalSocketPrefix, listenerCfg.LocalSocketSuffix)
+
 	return &Proxy{
-		log:    log,
-		statsd: sd,
-		config: config,
-
-		upstreamConfigHost: upstreamHost,
-		localConfigHost:    localSocketPathFromUpstream(upstreamHost, database, readonly, config.LocalSocketPrefix, config.LocalSocketSuffix),
-		minPoolSize:        minPoolSize,
-		maxPoolSize:        maxPoolSize,
-		readTimeout:        readTimeout,
-		writeTimeout:       writeTimeout,
-		database:           database,
-		readonly:           readonly,
-		redisLookup:        redisLookup,
-		requestMirroring:   requestMirroring,
-
-		quit: make(chan interface{}),
-		kill: make(chan interface{}),
+		log:            log,
+		statsd:         sd,
+		listenerConfig: listenerCfg,
+		upstreamConfig: upstreamCfg,
+		redisLookup:    lookup,
+		localHost:      localHost,
+		quit:           make(chan interface{}),
+		kill:           make(chan interface{}),
 
 		listeners:    make(map[string]*listener.Listener),
-		reservations: handlers.NewReservations(maxSub, maxBlk, sd),
+		reservations: handlers.NewReservations(listenerConfig.MaxSubscriptions, listenerConfig.MaxBlockers, sd),
 	}, nil
 }
 
@@ -133,7 +137,7 @@ func (p *Proxy) run(ctx context.Context) error {
 		}
 	}()
 
-	l, err := p.createListener(p.localConfigHost, p.upstreamConfigHost)
+	l, err := p.createListener(p.localHost, p.listenerConfig.Target)
 	if err != nil {
 		return err
 	}
@@ -142,7 +146,7 @@ func (p *Proxy) run(ctx context.Context) error {
 	}()
 
 	p.listenerLock.Lock()
-	p.listeners[p.upstreamConfigHost] = l
+	p.listeners[p.upstreamConfig.Address] = l
 	for _, l := range p.listeners {
 		p.runListener(l)
 	}
@@ -228,7 +232,7 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 	defer p.listenerLock.Unlock()
 	_, ok := p.listeners[upstream]
 	if !ok {
-		local := localSocketPathFromUpstream(upstream, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+		local := localSocketPathFromUpstream(upstream, p.upstreamConfig.Database, p.upstreamConfig.Readonly, p.listenerConfig.LocalSocketPrefix, p.listenerConfig.LocalSocketSuffix)
 		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local), zap.String("command", originalCmd))
 		l, err := p.createListener(local, upstream)
 		if err != nil {
@@ -240,15 +244,15 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 }
 
 func (p *Proxy) createListener(local, upstream string) (*listener.Listener, error) {
-	logWith := p.log.With(zap.String("upstream", upstream), zap.String("local", local))
+	logWith := p.log.With(zap.String("local", local))
 	sdWith, err := util.StatsdWithTags(p.statsd, []string{fmt.Sprintf("upstream:%s", upstream), fmt.Sprintf("local:%s", local)})
 	if err != nil {
 		return nil, err
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, conn, local, upstream, p.readTimeout, p.writeTimeout, id, kill, p.quit, p.interceptMessages, p.reservations, p.redisLookup, p.requestMirroring)
+		handlers.CommandConnection(log, p.statsd, conn, local, upstream, id, kill, p.quit, p.interceptMessages, p.reservations, p.redisLookup, p.listenerConfig)
 	}
 
-	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, func() {})
+	return listener.New(logWith, sdWith, p.listenerConfig.Network, local, p.listenerConfig.Unlink, connectionHandler, func() {})
 }
