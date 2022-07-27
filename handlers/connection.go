@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/utils"
@@ -19,7 +20,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type RedisLookup func(addr string) redis.ClientInterface
+const ErrorMissingUpstream = "MISSING_UPSTREAM"
 
 type connection struct {
 	sync.Mutex
@@ -39,13 +40,13 @@ type connection struct {
 	messenger        redis.Messenger
 	reservations     *Reservations
 	isClosed         bool
-	redisLookup      RedisLookup
+	redisLookup      config.Registry
 	requestMirroring *config.RequestMirrorPolicy
 }
 
 type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, upstream string, id uint64, kill, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, redisLookup RedisLookup, listenerCfg *config.Listener) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address, upstream string, id uint64, kill, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, redisLookup config.Registry, listenerCfg *config.Listener) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -134,7 +135,15 @@ func (c *connection) handleMessage(ctx context.Context) error {
 			return err
 		}
 	} else {
-		client := c.redisLookup(c.upstream)
+		r, ok := c.redisLookup.Lookup(c.upstream)
+
+		if !ok {
+			err := errors.New(ErrorMissingUpstream)
+			log.Error("Cannot locate upstream for connection", zap.Error(err), zap.String("upstream", c.requestMirroring.Upstream))
+			return err
+		}
+
+		client := r.(redis.ClientInterface)
 
 		var res []*redis.Message
 		if res, err = client.Call(ctx, wm); err != nil {
@@ -144,9 +153,14 @@ func (c *connection) handleMessage(ctx context.Context) error {
 		err = c.messenger.Write(c.ctx, log, res, c.conn, c.address, c.id, 0, len(res) > 1, c.conn.Close)
 
 		if c.requestMirroring != nil {
-			client = c.redisLookup(c.requestMirroring.Upstream)
-			if _, e := client.Call(ctx, wm); e != nil {
-				log.Error("Failed to call mirror client", zap.Error(e), zap.String("upstream", c.requestMirroring.Upstream))
+			if r, ok := c.redisLookup.Lookup(c.requestMirroring.Upstream); ok {
+				client := r.(redis.ClientInterface)
+				if _, e := client.Call(ctx, wm); e != nil {
+					log.Error("Failed to call mirror client", zap.Error(e), zap.String("upstream", c.requestMirroring.Upstream))
+				}
+			} else {
+				err := errors.New(ErrorMissingUpstream)
+				log.Error("Cannot locate upstream for mirroring", zap.Error(err), zap.String("upstream", c.requestMirroring.Upstream))
 			}
 		}
 	}
@@ -229,6 +243,9 @@ func (c *connection) Closed() bool {
 
 func (c *connection) checkoutConnection() (pool.ConnectionWrapper, error) {
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, c.log), utils.CtxStatsdKey, c.statsd)
-	client := c.redisLookup(c.upstream)
-	return client.CheckoutConnection(ctx)
+	if client, ok := c.redisLookup.Lookup(c.upstream); ok {
+		return client.(redis.ClientInterface).CheckoutConnection(ctx)
+	}
+
+	return nil, errors.New(ErrorMissingUpstream)
 }

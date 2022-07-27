@@ -72,11 +72,12 @@ func run(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
-	upstreamLookup := func(addr string) redis.ClientInterface {
-		return upstreams[addr]
+	upstreamRegistry := config.NewRegistry()
+	for name, r := range upstreams {
+		_ = upstreamRegistry.Register(name, r)
 	}
 
-	proxies, err := proxies(ctx, cfg, upstreamLookup)
+	proxies, err := proxies(ctx, cfg, upstreamRegistry)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -128,7 +129,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func proxies(ctx context.Context, c *config.Config, lookup func(addr string) redis.ClientInterface) (proxies []*proxy.Proxy, err error) {
+func proxies(ctx context.Context, c *config.Config, lookup config.Registry) (proxies []*proxy.Proxy, err error) {
 	for _, u := range c.Listeners {
 		p, err := proxy.NewProxy(ctx, c, u, lookup)
 

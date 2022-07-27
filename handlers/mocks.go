@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"fmt"
+	"github.com/coinbase/redisbetween/config"
 	"net"
 	"sync"
 	"testing"
@@ -108,6 +109,30 @@ func (m *netConnMock) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
+type MockRegistry struct {
+	val interface{}
+}
+
+func (m *MockRegistry) Lookup(_ string) (interface{}, bool) {
+	return m.val, true
+}
+
+func (m *MockRegistry) Register(name string, entity interface{}) error {
+	m.val = entity
+	return nil
+}
+
+func (m *MockRegistry) Remove(name string) (interface{}, error) {
+	e := m.val
+	m.val = nil
+
+	return e, nil
+}
+
+func NewMockRegistry(val interface{}) config.Registry {
+	return &MockRegistry{val: val}
+}
+
 /* messenger.Messenger mock */
 type messengerMock struct {
 	lock            sync.Mutex
@@ -179,18 +204,16 @@ func createConnectionMocks(t *testing.T, numMocks uint64) ([]*connection, *Reser
 
 	observedCore, observedLogs := observer.New(zap.InfoLevel)
 	observedLogger := zap.New(observedCore)
-
+	lookup := NewMockRegistry(redis.NewMockClient(sm))
 	for i := uint64(0); i < numMocks; i++ {
 		conn := &connection{
-			log:     observedLogger,
-			statsd:  sd,
-			ctx:     context.Background(),
-			conn:    &netConnMock{},
-			address: createLocalAddressForMock(i),
-			id:      i,
-			redisLookup: func(addr string) redis.ClientInterface {
-				return redis.NewMockClient(sm)
-			},
+			log:          observedLogger,
+			statsd:       sd,
+			ctx:          context.Background(),
+			conn:         &netConnMock{},
+			address:      createLocalAddressForMock(i),
+			id:           i,
+			redisLookup:  lookup,
 			kill:         make(chan interface{}),
 			interceptor:  func(incomingCmds []string, m []*redis.Message) {},
 			reservations: rs,

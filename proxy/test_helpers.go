@@ -54,20 +54,12 @@ func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize
 		Listeners: []*config.Listener{l},
 	}
 
-	upstreams := make(map[string]redis2.ClientInterface)
+	lookup := config.NewRegistry()
 	client, _ := redis2.NewClient(ctx, &redis2.Options{Addr: upstream})
-	upstreams["test"] = client
+	_ = lookup.Register("test", client)
 	if mirroring != nil {
 		mirror, _ := redis2.NewClient(ctx, &redis2.Options{Addr: mirroring.Upstream})
-		upstreams[mirroring.Upstream] = mirror
-	}
-	lookup := func(addr string) redis2.ClientInterface {
-		if r, ok := upstreams[addr]; ok {
-			return r
-		}
-
-		t.Fatal("Failed to find upstream", addr)
-		return nil
+		_ = lookup.Register(mirroring.Upstream, mirror)
 	}
 	proxy, err := NewProxy(ctx, cfg, l, lookup)
 	assert.NoError(t, err)

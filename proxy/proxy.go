@@ -32,7 +32,7 @@ type Proxy struct {
 	statsd         *statsd.Client
 	listenerConfig *config.Listener
 	upstreamConfig *config.Upstream
-	redisLookup    handlers.RedisLookup
+	redisRegistry  config.Registry
 	localHost      string
 	quit           chan interface{}
 	kill           chan interface{}
@@ -42,7 +42,7 @@ type Proxy struct {
 	reservations   *handlers.Reservations
 }
 
-func NewProxy(ctx context.Context, cfg *config.Config, listenerConfig *config.Listener, lookup handlers.RedisLookup) (*Proxy, error) {
+func NewProxy(ctx context.Context, cfg *config.Config, listenerConfig *config.Listener, lookup config.Registry) (*Proxy, error) {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
 
@@ -79,7 +79,7 @@ func NewProxy(ctx context.Context, cfg *config.Config, listenerConfig *config.Li
 		statsd:         sd,
 		listenerConfig: listenerCfg,
 		upstreamConfig: upstreamCfg,
-		redisLookup:    lookup,
+		redisRegistry:  lookup,
 		localHost:      localHost,
 		quit:           make(chan interface{}),
 		kill:           make(chan interface{}),
@@ -251,7 +251,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, conn, local, upstream, id, kill, p.quit, p.interceptMessages, p.reservations, p.redisLookup, p.listenerConfig)
+		handlers.CommandConnection(log, p.statsd, conn, local, upstream, id, kill, p.quit, p.interceptMessages, p.reservations, p.redisRegistry, p.listenerConfig)
 	}
 
 	return listener.New(logWith, sdWith, p.listenerConfig.Network, local, p.listenerConfig.Unlink, connectionHandler, func() {})
