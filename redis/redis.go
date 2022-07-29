@@ -28,10 +28,11 @@ type Options struct {
 type Client struct {
 	server    pool.ServerWrapper
 	messenger Messenger
-	config    *Options
+	config    Options
 }
 
 type ClientInterface interface {
+	Address() string
 	Call(ctx context.Context, msg []*Message) ([]*Message, error)
 	CheckoutConnection(ctx context.Context) (conn pool.ConnectionWrapper, err error)
 	Close(ctx context.Context) error
@@ -40,7 +41,8 @@ type ClientInterface interface {
 // NewClient opens a connection pool to the redis server
 // and returns a handle.
 func NewClient(ctx context.Context, c *Options) (ClientInterface, error) {
-	server, err := connectToServer(ctx, c)
+	config := *c
+	server, err := connectToServer(ctx, &config)
 
 	if err != nil {
 		return nil, err
@@ -49,8 +51,12 @@ func NewClient(ctx context.Context, c *Options) (ClientInterface, error) {
 	return &Client{
 		server:    server,
 		messenger: WireMessenger{},
-		config:    c,
+		config:    config,
 	}, nil
+}
+
+func (r *Client) Address() string {
+	return r.config.Addr
 }
 
 // Call performs a round trip call to the redis upstream and

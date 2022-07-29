@@ -10,7 +10,6 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
-	redis2 "github.com/coinbase/redisbetween/redis"
 	"github.com/coinbase/redisbetween/utils"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
@@ -54,12 +53,12 @@ func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize
 		Listeners: []*config.Listener{l},
 	}
 
-	lookup := config.NewRegistry()
-	client, _ := redis2.NewClient(ctx, &redis2.Options{Addr: upstream})
-	_ = lookup.Register("test", client)
+	lookup := NewUpstreamManager()
+	err = lookup.Add(ctx, &config.Upstream{Name: "test", Address: upstream})
+	assert.NoError(t, err)
 	if mirroring != nil {
-		mirror, _ := redis2.NewClient(ctx, &redis2.Options{Addr: mirroring.Upstream})
-		_ = lookup.Register(mirroring.Upstream, mirror)
+		err = lookup.Add(ctx, &config.Upstream{Name: mirroring.Upstream, Address: mirroring.Upstream})
+		assert.NoError(t, err)
 	}
 	proxy, err := NewProxy(ctx, cfg, l, lookup)
 	assert.NoError(t, err)

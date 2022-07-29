@@ -9,6 +9,10 @@ type client struct {
 	server pool.ServerWrapper
 }
 
+func (c client) Address() string {
+	return "address"
+}
+
 func (c client) Close(ctx context.Context) error {
 	return nil
 }

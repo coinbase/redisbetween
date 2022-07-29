@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/coinbase/redisbetween/redis"
 	"github.com/coinbase/redisbetween/utils"
 	"os"
 	"os/signal"
@@ -66,18 +65,17 @@ func run(ctx context.Context, cfg *config.Config) error {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface)
 
-	upstreams, err := upstreams(ctx, cfg)
-	if err != nil {
-		log.Error("Failed to initialized upstreams")
-		return err
+	upstreamManager := proxy.NewUpstreamManager()
+
+	for _, u := range cfg.Upstreams {
+		err := upstreamManager.Add(ctx, u)
+		if err != nil {
+			log.Error("Failed to initialized upstreams")
+			return err
+		}
 	}
 
-	upstreamRegistry := config.NewRegistry()
-	for name, r := range upstreams {
-		_ = upstreamRegistry.Register(name, r)
-	}
-
-	proxies, err := proxies(ctx, cfg, upstreamRegistry)
+	proxies, err := proxies(ctx, cfg, upstreamManager)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -104,23 +102,18 @@ func run(ctx context.Context, cfg *config.Config) error {
 		for _, p := range proxies {
 			p.Shutdown()
 		}
-
-		for _, u := range upstreams {
-			ctx, cancel := context.WithTimeout(ctx, disconnectTimeout)
-			_ = u.Close(ctx)
-			cancel()
-		}
+		ctx, cancel := context.WithTimeout(ctx, disconnectTimeout)
+		_ = upstreamManager.Shutdown(ctx)
+		cancel()
 	}
 	kill := func() {
 		for _, p := range proxies {
 			p.Kill()
 		}
 
-		for _, u := range upstreams {
-			ctx, cancel := context.WithTimeout(ctx, disconnectTimeout)
-			_ = u.Close(ctx)
-			cancel()
-		}
+		ctx, cancel := context.WithTimeout(ctx, disconnectTimeout)
+		_ = upstreamManager.Shutdown(ctx)
+		cancel()
 	}
 	shutdownOnSignal(log, shutdown, kill)
 
@@ -129,7 +122,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-func proxies(ctx context.Context, c *config.Config, lookup config.Registry) (proxies []*proxy.Proxy, err error) {
+func proxies(ctx context.Context, c *config.Config, lookup proxy.UpstreamManager) (proxies []*proxy.Proxy, err error) {
 	for _, u := range c.Listeners {
 		p, err := proxy.NewProxy(ctx, c, u, lookup)
 
@@ -167,36 +160,4 @@ func shutdownOnSignal(log *zap.Logger, shutdownFunc func(), killFunc func()) {
 			}
 		}
 	}()
-}
-
-func upstreams(ctx context.Context, c *config.Config) (map[string]redis.ClientInterface, error) {
-	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
-
-	upstreams := make(map[string]redis.ClientInterface)
-
-	for _, u := range c.Upstreams {
-		l := log.With(zap.String("label", u.Name), zap.String("address", u.Address))
-		if _, ok := upstreams[u.Address]; ok {
-			l.Debug("Upstream already initialized")
-			continue
-		}
-
-		client, err := redis.NewClient(ctx, &redis.Options{
-			Addr:         u.Address,
-			Database:     u.Database,
-			MinPoolSize:  u.MinPoolSize,
-			MaxPoolSize:  u.MaxPoolSize,
-			Readonly:     u.Readonly,
-			ReadTimeout:  u.ReadTimeout,
-			WriteTimeout: u.WriteTimeout,
-		})
-
-		if err != nil {
-			l.Error("Failed to connect to upstream", zap.Error(err))
-			continue
-		}
-		upstreams[u.Name] = client
-	}
-
-	return upstreams, nil
 }
