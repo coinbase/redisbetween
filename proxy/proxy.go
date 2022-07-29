@@ -227,16 +227,25 @@ func localSocketPathFromUpstream(upstream string, database int, readonly bool, p
 }
 
 func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
-	p.log.Info("ensuring we have a listener for", zap.String("upstream", upstream), zap.String("command", originalCmd))
+	log := p.log.With(zap.String("upstream", upstream), zap.String("command", originalCmd))
+	log.Info("adding upstream to manager")
+	upstreamCfg := *p.upstreamConfig
+	upstreamCfg.Name = upstream
+	upstreamCfg.Address = upstream
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxStatsdKey, p.statsd), utils.CtxLogKey, p.log)
+	_ = p.upstreams.Add(ctx, &upstreamCfg)
+
+	log.Info("ensuring we have a listener for")
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
 	_, ok := p.listeners[upstream]
 	if !ok {
 		local := localSocketPathFromUpstream(upstream, p.upstreamConfig.Database, p.upstreamConfig.Readonly, p.listenerConfig.LocalSocketPrefix, p.listenerConfig.LocalSocketSuffix)
-		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local), zap.String("command", originalCmd))
+		log.Info("did not find listener, creating new one", zap.String("local", local))
 		l, err := p.createListener(local, upstream)
 		if err != nil {
-			p.log.Error("unable to create listener", zap.Error(err))
+			log.Error("unable to create listener", zap.Error(err))
+			return
 		}
 		p.listeners[upstream] = l
 		p.runListener(l)
