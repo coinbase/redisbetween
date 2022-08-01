@@ -20,20 +20,28 @@ import (
 const disconnectTimeout = 10 * time.Second
 
 func main() {
-	c := config.ParseFlags()
-	log := newLogger(c.Level, c.Pretty)
-	s := newStatsd(c, log)
+	opts, err := config.ParseFlags()
+	if err != nil {
+		panic("Failed to parse flags")
+	}
 
+	log := newLogger(opts.Level, opts.Pretty)
+	s := newStatsd(opts.Statsd, log)
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxStatsdKey, s), utils.CtxLogKey, log)
 
-	err := run(ctx, c)
+	c, err := config.Load(ctx, opts)
+	if err != nil {
+		panic("Failed to parse flags")
+	}
+
+	err = run(ctx, c)
 	if err != nil {
 		log.Panic("error", zap.Error(err))
 	}
 }
 
-func newStatsd(c *config.Config, log *zap.Logger) *statsd.Client {
-	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redisbetween"))
+func newStatsd(addr string, log *zap.Logger) *statsd.Client {
+	s, err := statsd.New(addr, statsd.WithNamespace("redisbetween"))
 	if err != nil {
 		log.Panic("Failed to initialize statsd", zap.Error(err))
 	}
@@ -61,13 +69,15 @@ func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
 	return log
 }
 
-func run(ctx context.Context, cfg *config.Config) error {
+func run(ctx context.Context, cfg config.DynamicConfig) error {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface)
 
+	conf, _ := cfg.Config()
+
 	upstreamManager := proxy.NewUpstreamManager()
 
-	for _, u := range cfg.Upstreams {
+	for _, u := range conf.Upstreams {
 		err := upstreamManager.Add(ctx, u)
 		if err != nil {
 			log.Error("Failed to initialized upstreams")
@@ -75,7 +85,7 @@ func run(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 
-	proxies, err := proxies(ctx, cfg, upstreamManager)
+	proxies, err := proxies(ctx, conf, upstreamManager)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}

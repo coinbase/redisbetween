@@ -2,13 +2,11 @@ package config
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"net/url"
 	"os"
 	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -20,11 +18,13 @@ const defaultStatsdAddress = "localhost:8125"
 var validNetworks = []string{"tcp", "tcp4", "tcp6", "unix", "unixpacket"}
 
 type Config struct {
-	Pretty    bool
-	Statsd    string
-	Level     zapcore.Level
-	Listeners []*Listener
-	Upstreams []*Upstream
+	Pretty       bool
+	Statsd       string
+	Level        zapcore.Level
+	Url          string
+	PollInterval time.Duration
+	Listeners    []*Listener
+	Upstreams    []*Upstream
 }
 
 type Listener struct {
@@ -55,16 +55,6 @@ type RequestMirrorPolicy struct {
 	Upstream string
 }
 
-func ParseFlags() *Config {
-	config, err := parseFlags()
-	if err != nil {
-		fmt.Printf("Error: %v\n", err)
-		flag.Usage()
-		os.Exit(2)
-	}
-	return config
-}
-
 func validNetwork(network string) bool {
 	for _, n := range validNetworks {
 		if n == network {
@@ -72,91 +62,6 @@ func validNetwork(network string) bool {
 		}
 	}
 	return false
-}
-
-func parseFlags() (*Config, error) {
-	flag.Usage = func() {
-		fmt.Printf("Usage: %s [OPTIONS] uri1 [uri2] ...\n", os.Args[0])
-		flag.PrintDefaults()
-	}
-
-	var stats, loglevel string
-	var pretty bool
-	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
-	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
-	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
-
-	// todo remove these flags in a follow up, after all envs have updated to the new url-param style of timeout config
-	var obsoleteArg string
-	flag.StringVar(&obsoleteArg, "readtimeout", "unused", "unused. for backwards compatibility only")
-	flag.StringVar(&obsoleteArg, "writetimeout", "unused", "unused. for backwards compatibility only")
-
-	flag.Parse()
-
-	level := zap.InfoLevel
-	if loglevel != "" {
-		err := level.Set(loglevel)
-		if err != nil {
-			return nil, fmt.Errorf("invalid loglevel: %s", loglevel)
-		}
-	}
-
-	var upstreams []*Upstream
-	var listeners []*Listener
-	for _, arg := range flag.Args() {
-		all := strings.FieldsFunc(arg, func(r rune) bool {
-			return r == '|' || r == '\n'
-		})
-		for _, v := range all {
-			u, err := url.Parse(v)
-			if err != nil {
-				return nil, err
-			}
-
-			if u.Scheme == "redis" {
-				us, err := parseUpstream(u)
-				if err != nil {
-					return nil, err
-				}
-				upstreams = append(upstreams, us)
-			} else {
-				ls, err := parseListener(u)
-				if err != nil {
-					return nil, err
-				}
-				listeners = append(listeners, ls)
-			}
-		}
-	}
-
-	if len(upstreams) == 0 {
-		return nil, errors.New("missing list of upstream hosts")
-	}
-
-	if len(listeners) == 0 {
-		return nil, errors.New("missing list of listeners")
-	}
-
-	addrMap := make(map[string]bool)
-	for _, c := range upstreams {
-		key := c.Address + "/" + strconv.Itoa(c.Database)
-		if c.Readonly {
-			key += "-readonly"
-		}
-		_, ok := addrMap[key]
-		if ok {
-			return nil, fmt.Errorf("duplicate entry for address: %v", c.Address)
-		}
-		addrMap[key] = true
-	}
-
-	return &Config{
-		Upstreams: upstreams,
-		Listeners: listeners,
-		Pretty:    pretty,
-		Statsd:    stats,
-		Level:     level,
-	}, nil
 }
 
 func parseUpstream(u *url.URL) (*Upstream, error) {
