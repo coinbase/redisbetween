@@ -26,7 +26,7 @@ func createConfig(t *testing.T, data string) *os.File {
 
 func TestLoadConfigFromAFile(t *testing.T) {
 	url := uuid.New().String()
-	f := createConfig(t, fmt.Sprintf("{\"url\": \"%s\" }", url))
+	f := createConfig(t, fmt.Sprintf("{\"statsd\": \"%s\" }", url))
 
 	defer func() {
 		assert.NoError(t, os.Remove(f.Name()))
@@ -38,12 +38,12 @@ func TestLoadConfigFromAFile(t *testing.T) {
 	defer config.Stop()
 
 	cfg, _ := config.Config()
-	assert.Equal(t, url, cfg.Url)
+	assert.Equal(t, url, cfg.Statsd)
 }
 
 func TestPollConfigFromAFile(t *testing.T) {
 	url := uuid.New().String()
-	f := createConfig(t, fmt.Sprintf("{\"url\": \"%s\" }", url))
+	f := createConfig(t, fmt.Sprintf("{\"statsd\": \"%s\" }", url))
 
 	defer func() {
 		assert.NoError(t, os.Remove(f.Name()))
@@ -55,14 +55,74 @@ func TestPollConfigFromAFile(t *testing.T) {
 	defer config.Stop()
 
 	cfg, _ := config.Config()
-	assert.Equal(t, url, cfg.Url)
+	assert.Equal(t, url, cfg.Statsd)
 
 	newUrl := uuid.New().String()
-	jsonConfig := []byte(fmt.Sprintf("{\"url\": \"%s\" }", newUrl))
+	jsonConfig := []byte(fmt.Sprintf("{\"statsd\": \"%s\" }", newUrl))
 	assert.NoError(t, ioutil.WriteFile(f.Name(), jsonConfig, fs.ModePerm))
 
 	time.Sleep(2 * time.Second)
 	cfg, _ = config.Config()
-	assert.NotEqual(t, url, cfg.Url)
-	assert.Equal(t, newUrl, cfg.Url)
+	assert.NotEqual(t, url, cfg.Statsd)
+	assert.Equal(t, newUrl, cfg.Statsd)
 }
+
+func TestLoadConfigToReadUpstreamAndListeners(t *testing.T) {
+	upstream := uuid.New().String()
+	f := createConfig(t, fmt.Sprintf(config, upstream))
+
+	defer func() {
+		assert.NoError(t, os.Remove(f.Name()))
+	}()
+
+	opts := Options{Url: f.Name(), PollInterval: 1000}
+	config, err := Load(context.WithValue(context.TODO(), utils.CtxLogKey, zap.L()), &opts)
+	assert.NoError(t, err)
+	defer config.Stop()
+
+	cfg, _ := config.Config()
+	assert.Equal(t, 1, len(cfg.Upstreams))
+	assert.Equal(t, upstream, cfg.Upstreams[0].Name)
+	assert.Equal(t, "localhost:7000", cfg.Upstreams[0].Address)
+	assert.Equal(t, 1, cfg.Upstreams[0].MinPoolSize)
+	assert.Equal(t, 1, cfg.Upstreams[0].MaxPoolSize)
+	assert.Equal(t, 5*time.Second, cfg.Upstreams[0].ReadTimeout)
+	assert.Equal(t, 5*time.Second, cfg.Upstreams[0].WriteTimeout)
+	assert.False(t, cfg.Upstreams[0].Readonly)
+
+	assert.Equal(t, 1, len(cfg.Listeners))
+	assert.Equal(t, "test-listener", cfg.Listeners[0].Name)
+	assert.Equal(t, "unix", cfg.Listeners[0].Network)
+	assert.Equal(t, "redis-", cfg.Listeners[0].LocalSocketPrefix)
+	assert.Equal(t, "-in", cfg.Listeners[0].LocalSocketSuffix)
+	assert.Equal(t, upstream, cfg.Listeners[0].Target)
+	assert.Equal(t, 1, cfg.Listeners[0].MaxSubscriptions)
+	assert.Equal(t, 1, cfg.Listeners[0].MaxBlockers)
+	assert.True(t, cfg.Listeners[0].Unlink)
+}
+
+const config = `{
+  "url": "temp",
+  "upstreams": [
+    {
+      "name": "%[1]v",
+      "address": "localhost:7000",
+      "database": 2,
+      "maxPoolSize": 1,
+      "minPoolSize": 1,
+      "readonly": false
+    }
+  ],
+  "listeners": [
+    {
+      "name": "test-listener",
+      "network": "unix",
+      "localSocketPrefix": "redis-",
+      "localSocketSuffix": "-in",
+      "target": "%[1]v",
+      "maxSubscriptions": 1,
+      "maxBlockers": 1,
+      "unlink": true
+    }
+  ]
+}`

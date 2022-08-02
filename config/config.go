@@ -1,12 +1,8 @@
 package config
 
 import (
-	"errors"
-	"fmt"
-	"net/url"
-	"os"
-	"regexp"
-	"strconv"
+	"context"
+	"github.com/coinbase/redisbetween/utils"
 	"time"
 
 	"go.uber.org/zap"
@@ -18,13 +14,11 @@ const defaultStatsdAddress = "localhost:8125"
 var validNetworks = []string{"tcp", "tcp4", "tcp6", "unix", "unixpacket"}
 
 type Config struct {
-	Pretty       bool
-	Statsd       string
-	Level        zapcore.Level
-	Url          string
-	PollInterval time.Duration
-	Listeners    []*Listener
-	Upstreams    []*Upstream
+	Pretty    bool
+	Statsd    string
+	Level     zapcore.Level
+	Listeners []*Listener
+	Upstreams []*Upstream
 }
 
 type Listener struct {
@@ -55,6 +49,161 @@ type RequestMirrorPolicy struct {
 	Upstream string
 }
 
+func New(ctx context.Context, input *configAlias) *Config {
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+
+	logLevel := zap.InfoLevel
+	if input.Level != "" {
+		if err := logLevel.Set(input.Level); err != nil {
+			log.Error("invalid log level for config", zap.Error(err))
+		}
+	}
+
+	listeners := make([]*Listener, 0, len(input.Listeners))
+	upstreams := make([]*Upstream, 0, len(input.Upstreams))
+
+	for index, l := range input.Listeners {
+		log := log.With(zap.Int("index", index), zap.String("field", "Listeners"))
+		var mirroring *RequestMirrorPolicy
+
+		if l.Target == "" {
+			log.Error("listener must have target. skipping")
+			continue
+		}
+
+		if !validNetwork(l.Network) {
+			log.Error("invalid network specified for listener. skipping")
+			continue
+		}
+
+		if l.Mirroring != nil && l.Mirroring.Upstream != "" {
+			mirroring = &RequestMirrorPolicy{Upstream: l.Mirroring.Upstream}
+		}
+
+		if l.LocalSocketPrefix == "" {
+			l.LocalSocketPrefix = "/var/tmp/redisbetween-"
+		}
+
+		if l.LocalSocketSuffix == "" {
+			l.LocalSocketSuffix = ".sock"
+		}
+
+		if l.MaxSubscriptions < 1 {
+			l.MaxSubscriptions = 1
+		}
+
+		if l.MaxBlockers < 1 {
+			l.MaxBlockers = 1
+		}
+
+		listener := &Listener{
+			Name:              l.Name,
+			Network:           l.Network,
+			LocalSocketPrefix: l.LocalSocketPrefix,
+			LocalSocketSuffix: l.LocalSocketSuffix,
+			Target:            l.Target,
+			MaxSubscriptions:  l.MaxSubscriptions,
+			MaxBlockers:       l.MaxBlockers,
+			Unlink:            l.Unlink,
+			LogLevel:          logLevel,
+			Mirroring:         mirroring,
+		}
+
+		listeners = append(listeners, listener)
+	}
+
+	names := make(map[string]bool)
+	for index, u := range input.Upstreams {
+		log := log.With(zap.Int("index", index), zap.String("field", "Upstreams"))
+
+		if u.Name == "" {
+			log.Error("upstream must have a name")
+			continue
+		}
+
+		if _, ok := names[u.Name]; ok {
+			log.Error("duplicate upstream for the name present. skipping")
+			continue
+		}
+
+		if u.Database < -1 {
+			u.Database = -1
+		}
+
+		if u.MinPoolSize < 1 {
+			u.MinPoolSize = 1
+		}
+
+		if u.MaxPoolSize < 1 {
+			u.MaxPoolSize = 10
+		}
+
+		names[u.Name] = true
+
+		upstream := &Upstream{
+			Name:         u.Name,
+			Address:      u.Address,
+			Database:     u.Database,
+			MaxPoolSize:  u.MaxPoolSize,
+			MinPoolSize:  u.MinPoolSize,
+			ReadTimeout:  5 * time.Second,
+			WriteTimeout: 5 * time.Second,
+			Readonly:     u.Readonly,
+		}
+
+		t, err := time.ParseDuration(u.WriteTimeout)
+		if err != nil {
+			log.Error("failed to parse write timeout", zap.Error(err))
+		} else {
+			upstream.WriteTimeout = t
+		}
+		t, err = time.ParseDuration(u.ReadTimeout)
+		if err != nil {
+			log.Error("failed to parse read timeout", zap.Error(err))
+		} else {
+			upstream.ReadTimeout = t
+		}
+
+		upstreams = append(upstreams, upstream)
+	}
+
+	return &Config{
+		Pretty:    input.Pretty,
+		Statsd:    input.Statsd,
+		Level:     logLevel,
+		Listeners: listeners,
+		Upstreams: upstreams,
+	}
+}
+
+type configAlias struct {
+	Pretty    bool
+	Statsd    string
+	Level     string
+	Listeners []*struct {
+		Name              string
+		Network           string
+		LocalSocketPrefix string
+		LocalSocketSuffix string
+		LogLevel          string
+		Target            string
+		MaxSubscriptions  int
+		MaxBlockers       int
+		Unlink            bool
+		Mirroring         *struct{ Upstream string }
+	}
+	Upstreams []*struct {
+		Name         string
+		Address      string
+		Database     int
+		MaxPoolSize  int
+		MinPoolSize  int
+		ReadTimeout  string
+		WriteTimeout string
+		Readonly     bool
+	}
+}
+
 func validNetwork(network string) bool {
 	for _, n := range validNetworks {
 		if n == network {
@@ -62,120 +211,4 @@ func validNetwork(network string) bool {
 		}
 	}
 	return false
-}
-
-func parseUpstream(u *url.URL) (*Upstream, error) {
-	var err error
-
-	db := -1
-	if len(u.Path) > 1 {
-		db, err = strconv.Atoi(u.Path[1:])
-		if err != nil {
-			return nil, errors.New("failed to parse redis db number from path")
-		}
-	}
-
-	params, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return nil, err
-	}
-
-	rt, err := time.ParseDuration(getStringParam(params, "readtimeout", "5s"))
-	if err != nil {
-		return nil, err
-	}
-
-	wt, err := time.ParseDuration(getStringParam(params, "writetimeout", "5s"))
-	if err != nil {
-		return nil, err
-	}
-
-	upstream := Upstream{
-		Address:      u.Host,
-		Name:         getStringParam(params, "label", ""),
-		MaxPoolSize:  getIntParam(params, "maxpoolsize", 10),
-		MinPoolSize:  getIntParam(params, "minpoolsize", 1),
-		Database:     db,
-		ReadTimeout:  rt,
-		WriteTimeout: wt,
-		Readonly:     getBoolParam(params, "readonly"),
-	}
-
-	return &upstream, nil
-}
-
-func parseListener(u *url.URL) (*Listener, error) {
-	var err error
-
-	if !validNetwork(u.Scheme) {
-		return nil, fmt.Errorf("invalid network: %s", u.Scheme)
-	}
-
-	params, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return nil, err
-	}
-
-	level := zap.InfoLevel
-	loglevel := getStringParam(params, "loglevel", "")
-	if loglevel != "" {
-		err := level.Set(loglevel)
-		if err != nil {
-			return nil, fmt.Errorf("invalid loglevel: %s", loglevel)
-		}
-	}
-
-	listener := Listener{
-		Network:           u.Scheme,
-		Name:              getStringParam(params, "label", ""),
-		LocalSocketPrefix: getStringParam(params, "localsocketprefix", "/var/tmp/redisbetween-"),
-		LocalSocketSuffix: getStringParam(params, "localsocketsuffix", ".sock"),
-		Target:            getStringParam(params, "target", ""),
-		MaxSubscriptions:  getIntParam(params, "maxsubscriptions", 1),
-		MaxBlockers:       getIntParam(params, "maxblockers", 1),
-		Unlink:            getBoolParam(params, "unlink"),
-		LogLevel:          level,
-	}
-
-	if h := getStringParam(params, "mirrorTarget", ""); len(h) > 0 {
-		listener.Mirroring = &RequestMirrorPolicy{
-			Upstream: h,
-		}
-	}
-
-	return &listener, nil
-}
-
-func getStringParam(v url.Values, key, def string) string {
-	cl, ok := v[key]
-	if !ok {
-		return def
-	}
-	return cl[0]
-}
-
-func getIntParam(v url.Values, key string, def int) int {
-	cl, ok := v[key]
-	if !ok {
-		return def
-	}
-
-	val := expandEnv(cl[0])
-	i, err := strconv.Atoi(val)
-	if err != nil {
-		return def
-	}
-	return i
-}
-
-func getBoolParam(v url.Values, key string) bool {
-	val := getStringParam(v, key, "false")
-	return val == "true"
-}
-
-func expandEnv(config string) string {
-	// more restrictive version of os.ExpandEnv that only replaces exact matches of ${ENV}
-	return regexp.MustCompile(`\${(\w+)}`).ReplaceAllStringFunc(config, func(s string) string {
-		return os.ExpandEnv(s)
-	})
 }

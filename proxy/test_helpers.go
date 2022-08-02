@@ -48,19 +48,14 @@ func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize
 		WriteTimeout: 1 * time.Second,
 	}
 
-	cfg := &config.Config{
-		Upstreams: []*config.Upstream{u},
-		Listeners: []*config.Listener{l},
-	}
-
 	lookup := NewUpstreamManager()
-	err = lookup.Add(ctx, &config.Upstream{Name: "test", Address: upstream})
+	err = lookup.Add(ctx, u)
 	assert.NoError(t, err)
 	if mirroring != nil {
 		err = lookup.Add(ctx, &config.Upstream{Name: mirroring.Upstream, Address: mirroring.Upstream})
 		assert.NoError(t, err)
 	}
-	proxy, err := NewProxy(ctx, cfg, l, lookup)
+	proxy, err := NewProxy(ctx, l, lookup)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run(context.Background())

@@ -134,7 +134,7 @@ func run(ctx context.Context, cfg config.DynamicConfig) error {
 
 func proxies(ctx context.Context, c *config.Config, lookup proxy.UpstreamManager) (proxies []*proxy.Proxy, err error) {
 	for _, u := range c.Listeners {
-		p, err := proxy.NewProxy(ctx, c, u, lookup)
+		p, err := proxy.NewProxy(ctx, u, lookup)
 
 		if err != nil {
 			return nil, err

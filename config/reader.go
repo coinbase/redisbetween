@@ -102,7 +102,7 @@ func newDynamicConfig(ctx context.Context, opts *Options) (*dynamicConfig, error
 	return dyn, nil
 }
 
-func readConfig(opts *Options, _ *zap.Logger) (*Config, string, error) {
+func readConfig(opts *Options, log *zap.Logger) (*Config, string, error) {
 	f, err := ioutil.TempFile("", "*.json")
 	if err != nil {
 		return nil, "", err
@@ -142,21 +142,20 @@ func readConfig(opts *Options, _ *zap.Logger) (*Config, string, error) {
 
 	hash := md5.Sum(body)
 
-	cfg := Config{
-		Pretty:       opts.Pretty,
-		Statsd:       opts.Statsd,
-		Level:        opts.Level,
-		Url:          opts.Url,
-		PollInterval: opts.PollInterval,
-		Upstreams:    []*Upstream{},
-		Listeners:    []*Listener{},
+	alias := configAlias{
+		Pretty: opts.Pretty,
+		Statsd: opts.Statsd,
+		Level:  opts.Level.String(),
 	}
 
-	if err = json.Unmarshal(body, &cfg); err != nil {
+	if err = json.Unmarshal(body, &alias); err != nil {
 		return nil, "", err
 	}
 
-	return &cfg, hex.EncodeToString(hash[:]), nil
+	ctx := context.WithValue(context.TODO(), utils.CtxLogKey, log)
+	cfg := New(ctx, &alias)
+
+	return cfg, hex.EncodeToString(hash[:]), nil
 }
 
 func (d *dynamicConfig) Config() (*Config, Version) {

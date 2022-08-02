@@ -42,7 +42,7 @@ type Proxy struct {
 	reservations   *handlers.Reservations
 }
 
-func NewProxy(ctx context.Context, cfg *config.Config, listenerConfig *config.Listener, upstreams UpstreamManager) (*Proxy, error) {
+func NewProxy(ctx context.Context, listenerConfig *config.Listener, upstreams UpstreamManager) (*Proxy, error) {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
 
@@ -60,14 +60,12 @@ func NewProxy(ctx context.Context, cfg *config.Config, listenerConfig *config.Li
 		}
 	}
 
+	// Make a local copy of the config to use for future listener/upstream creation due
+	// to cluster command intercept.
 	upstreamCfg := &config.Upstream{}
-	for _, u := range cfg.Upstreams {
-		if u.Name == listenerCfg.Target {
-			*upstreamCfg = *u
-		}
-	}
-
-	if upstreamCfg == nil {
+	if u, ok := upstreams.ConfigByName(ctx, listenerCfg.Target); ok {
+		*upstreamCfg = *u
+	} else {
 		log.Error("Missing upstream in config", zap.String("target", listenerCfg.Target))
 		return nil, errors.New("MISSING_UPSTREAM")
 	}

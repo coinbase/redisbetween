@@ -30,23 +30,23 @@ type RedisLookup interface {
 type connection struct {
 	sync.Mutex
 
-	log              *zap.Logger
-	statsd           *statsd.Client
-	ctx              context.Context
-	readTimeout      time.Duration
-	writeTimeout     time.Duration
-	conn             net.Conn
-	address          string
-	upstream         string
-	id               uint64
-	kill             chan interface{}
-	quit             chan interface{}
-	interceptor      MessageInterceptor
-	messenger        redis.Messenger
-	reservations     *Reservations
-	isClosed         bool
-	redisLookup      RedisLookup
-	requestMirroring *config.RequestMirrorPolicy
+	log          *zap.Logger
+	statsd       *statsd.Client
+	ctx          context.Context
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+	conn         net.Conn
+	address      string
+	upstream     string
+	id           uint64
+	kill         chan interface{}
+	quit         chan interface{}
+	interceptor  MessageInterceptor
+	messenger    redis.Messenger
+	reservations *Reservations
+	isClosed     bool
+	redisLookup  RedisLookup
+	config       *config.Listener
 }
 
 type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
@@ -59,20 +59,20 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, addres
 	}()
 
 	c := connection{
-		log:              log,
-		statsd:           sd,
-		ctx:              context.Background(),
-		conn:             conn,
-		address:          address,
-		upstream:         upstream,
-		id:               id,
-		kill:             kill,
-		quit:             quit,
-		interceptor:      interceptor,
-		messenger:        redis.WireMessenger{},
-		reservations:     reservations,
-		redisLookup:      redisLookup,
-		requestMirroring: listenerCfg.Mirroring,
+		log:          log,
+		statsd:       sd,
+		ctx:          context.Background(),
+		conn:         conn,
+		address:      address,
+		upstream:     upstream,
+		id:           id,
+		kill:         kill,
+		quit:         quit,
+		interceptor:  interceptor,
+		messenger:    redis.WireMessenger{},
+		reservations: reservations,
+		redisLookup:  redisLookup,
+		config:       listenerCfg,
 	}
 
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, sd)
@@ -144,7 +144,7 @@ func (c *connection) handleMessage(ctx context.Context) error {
 
 		if !ok {
 			err := errors.New(ErrorMissingUpstream)
-			log.Error("Cannot locate upstream for connection", zap.Error(err), zap.String("upstream", c.requestMirroring.Upstream))
+			log.Error("Cannot locate upstream for connection", zap.Error(err), zap.String("upstream", c.upstream))
 			return err
 		}
 
@@ -157,15 +157,16 @@ func (c *connection) handleMessage(ctx context.Context) error {
 		c.interceptor(incomingCmds, res)
 		err = c.messenger.Write(c.ctx, log, res, c.conn, c.address, c.id, 0, len(res) > 1, c.conn.Close)
 
-		if c.requestMirroring != nil {
-			if r, ok := c.lookupUpstreamRedis(ctx, c.requestMirroring.Upstream); ok {
+		if c.config.Mirroring != nil {
+			upstream := c.config.Mirroring.Upstream
+			if r, ok := c.lookupUpstreamRedis(ctx, upstream); ok {
 				client := r.(redis.ClientInterface)
 				if _, e := client.Call(ctx, wm); e != nil {
-					log.Error("Failed to call mirror client", zap.Error(e), zap.String("upstream", c.requestMirroring.Upstream))
+					log.Error("Failed to call mirror client", zap.Error(e), zap.String("upstream", upstream))
 				}
 			} else {
 				err := errors.New(ErrorMissingUpstream)
-				log.Error("Cannot locate upstream for mirroring", zap.Error(err), zap.String("upstream", c.requestMirroring.Upstream))
+				log.Error("Cannot locate upstream for mirroring", zap.Error(err), zap.String("upstream", upstream))
 			}
 		}
 	}
