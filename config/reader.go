@@ -18,14 +18,16 @@ type Version int64
 
 type DynamicConfig interface {
 	Config() (*Config, Version)
+	OnUpdate() <-chan bool
 	Stop()
 }
 
 type dynamicConfig struct {
-	current *Config
-	version Version
-	stop    chan<- bool
-	wg      *sync.WaitGroup
+	current        *Config
+	version        Version
+	stop           chan<- bool
+	wg             *sync.WaitGroup
+	updateChannels []chan<- bool
 	sync.RWMutex
 }
 
@@ -58,12 +60,7 @@ func newDynamicConfig(ctx context.Context, opts *Options) (*dynamicConfig, error
 		for {
 			select {
 			case c := <-update:
-				func(d *dynamicConfig) {
-					d.Lock()
-					defer d.Unlock()
-					d.current = c
-					d.version = Version(time.Now().UnixMilli())
-				}(dyn)
+				dyn.updateConfig(c)
 			case <-stop:
 				return
 			}
@@ -158,6 +155,31 @@ func readConfig(opts *Options, log *zap.Logger) (*Config, string, error) {
 	return cfg, hex.EncodeToString(hash[:]), nil
 }
 
+func (d *dynamicConfig) updateConfig(c *Config) {
+	d.Lock()
+	defer d.Unlock()
+	d.current = c
+	d.version = Version(time.Now().UnixMilli())
+
+	// Prevent blocking in case the channel is not consumed.
+	// Since the channel already has update
+	for _, channel := range d.updateChannels {
+		select {
+		case channel <- true:
+		default:
+		}
+	}
+}
+
+func (d *dynamicConfig) OnUpdate() <-chan bool {
+	d.Lock()
+	defer d.Unlock()
+	channel := make(chan bool, 1)
+
+	d.updateChannels = append(d.updateChannels, channel)
+	return channel
+}
+
 func (d *dynamicConfig) Config() (*Config, Version) {
 	d.RLock()
 	defer d.RUnlock()
@@ -165,6 +187,10 @@ func (d *dynamicConfig) Config() (*Config, Version) {
 }
 
 func (d *dynamicConfig) Stop() {
+	d.Lock()
+	defer d.Unlock()
+	defer d.wg.Wait()
+
+	d.updateChannels = nil
 	close(d.stop)
-	d.wg.Wait()
 }

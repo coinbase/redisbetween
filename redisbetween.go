@@ -73,7 +73,9 @@ func run(ctx context.Context, cfg config.DynamicConfig) error {
 	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
 	sd := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface)
 
+	stopChannel := make(chan bool)
 	conf, _ := cfg.Config()
+	updateChannel := cfg.OnUpdate()
 
 	upstreamManager := proxy.NewUpstreamManager()
 
@@ -95,6 +97,30 @@ func run(ctx context.Context, cfg config.DynamicConfig) error {
 		wg.Wait()
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-updateChannel:
+				newConfig, version := cfg.Config()
+				log.Info("received config update. updating components", zap.Int64("version", int64(version)))
+
+				for _, l := range newConfig.Listeners {
+					if p, ok := proxies[l.Name]; ok {
+						err := p.Update(l)
+						if err != nil {
+							log.Info("update to proxy failed", zap.String("name", l.Name), zap.Error(err))
+						}
+					}
+				}
+
+			case <-stopChannel:
+				return
+			}
+		}
+	}()
+
 	for _, p := range proxies {
 		p := p
 		wg.Add(1)
@@ -109,6 +135,7 @@ func run(ctx context.Context, cfg config.DynamicConfig) error {
 	}
 
 	shutdown := func() {
+		close(stopChannel)
 		for _, p := range proxies {
 			p.Shutdown()
 		}
@@ -117,6 +144,7 @@ func run(ctx context.Context, cfg config.DynamicConfig) error {
 		cancel()
 	}
 	kill := func() {
+		close(stopChannel)
 		for _, p := range proxies {
 			p.Kill()
 		}
@@ -132,14 +160,14 @@ func run(ctx context.Context, cfg config.DynamicConfig) error {
 	return nil
 }
 
-func proxies(ctx context.Context, c *config.Config, lookup proxy.UpstreamManager) (proxies []*proxy.Proxy, err error) {
-	for _, u := range c.Listeners {
-		p, err := proxy.NewProxy(ctx, u, lookup)
+func proxies(ctx context.Context, c *config.Config, lookup proxy.UpstreamManager) (proxies map[string]*proxy.Proxy, err error) {
+	for _, listenerConfig := range c.Listeners {
+		p, err := proxy.NewProxy(ctx, listenerConfig, lookup)
 
 		if err != nil {
 			return nil, err
 		}
-		proxies = append(proxies, p)
+		proxies[listenerConfig.Name] = p
 	}
 	return
 }

@@ -6,7 +6,9 @@ import (
 	redis2 "github.com/coinbase/redisbetween/redis"
 	"github.com/coinbase/redisbetween/utils"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 	"strconv"
 	"sync"
 	"testing"
@@ -154,6 +156,51 @@ func TestLocalSocketPathFromUpstream(t *testing.T) {
 	assert.Equal(t, "prefix-withoutcolon.host.suffix", localSocketPathFromUpstream("withoutcolon.host", -1, false, "prefix-", ".suffix"))
 	assert.Equal(t, "prefix-with.host-db-1.suffix", localSocketPathFromUpstream("with.host:db", 1, false, "prefix-", ".suffix"))
 	assert.Equal(t, "prefix-with.host-db-ro.suffix", localSocketPathFromUpstream("with.host:db", -1, true, "prefix-", ".suffix"))
+}
+
+func TestUpdateConfig(t *testing.T) {
+	cfg := &config.Listener{
+		Name:              uuid.New().String(),
+		Network:           uuid.New().String(),
+		LocalSocketPrefix: uuid.New().String(),
+		LocalSocketSuffix: uuid.New().String(),
+		LogLevel:          zap.InfoLevel,
+		Target:            uuid.New().String(),
+		MaxSubscriptions:  9,
+		MaxBlockers:       99,
+		Unlink:            false,
+		Mirroring: &config.RequestMirrorPolicy{
+			Upstream: uuid.New().String(),
+		},
+	}
+	conf := *cfg
+	proxy := &Proxy{listenerConfig: &conf}
+
+	newTarget := uuid.New().String()
+	err := proxy.Update(&config.Listener{
+		Name:              uuid.New().String(),
+		Network:           uuid.New().String(),
+		LocalSocketPrefix: uuid.New().String(),
+		LocalSocketSuffix: uuid.New().String(),
+		LogLevel:          zap.ErrorLevel,
+		Target:            newTarget,
+		MaxSubscriptions:  99,
+		MaxBlockers:       9,
+		Unlink:            true,
+		Mirroring:         nil,
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, cfg.Name, proxy.listenerConfig.Name)
+	assert.Equal(t, cfg.Network, proxy.listenerConfig.Network)
+	assert.Equal(t, cfg.LocalSocketPrefix, proxy.listenerConfig.LocalSocketPrefix)
+	assert.Equal(t, cfg.LocalSocketSuffix, proxy.listenerConfig.LocalSocketSuffix)
+	assert.NotEqual(t, cfg.Target, proxy.listenerConfig.Target)
+	assert.Equal(t, newTarget, proxy.listenerConfig.Target)
+	assert.Equal(t, cfg.MaxSubscriptions, proxy.listenerConfig.MaxSubscriptions)
+	assert.Equal(t, cfg.MaxBlockers, proxy.listenerConfig.MaxBlockers)
+	assert.Equal(t, cfg.Unlink, proxy.listenerConfig.Unlink)
+	assert.NotEqual(t, cfg.Mirroring, proxy.listenerConfig.Mirroring)
+	assert.Nil(t, proxy.listenerConfig.Mirroring)
 }
 
 func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {

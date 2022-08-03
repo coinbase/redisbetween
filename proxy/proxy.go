@@ -263,3 +263,10 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 
 	return listener.New(logWith, sdWith, p.listenerConfig.Network, local, p.listenerConfig.Unlink, connectionHandler, func() {})
 }
+
+func (p *Proxy) Update(l *config.Listener) error {
+	p.listenerConfig.Mirroring = l.Mirroring
+	p.listenerConfig.Target = l.Target
+
+	return nil
+}

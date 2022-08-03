@@ -61,7 +61,7 @@ func TestPollConfigFromAFile(t *testing.T) {
 	jsonConfig := []byte(fmt.Sprintf("{\"statsd\": \"%s\" }", newUrl))
 	assert.NoError(t, ioutil.WriteFile(f.Name(), jsonConfig, fs.ModePerm))
 
-	time.Sleep(2 * time.Second)
+	<-config.OnUpdate()
 	cfg, _ = config.Config()
 	assert.NotEqual(t, url, cfg.Statsd)
 	assert.Equal(t, newUrl, cfg.Statsd)
