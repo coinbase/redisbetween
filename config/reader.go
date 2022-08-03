@@ -113,7 +113,7 @@ func readConfig(opts *Options, log *zap.Logger) (*Config, string, error) {
 	pwd, _ := os.Getwd()
 	client := &getter.Client{
 		Ctx:  context.Background(),
-		Src:  opts.Url,
+		Src:  opts.ConfigUrl,
 		Dst:  f.Name(),
 		Pwd:  pwd,
 		Mode: getter.ClientModeFile,

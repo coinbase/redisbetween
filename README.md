@@ -89,31 +89,42 @@ go install github.com/coinbase/redisbetween
 ### Usage
 ```
 Usage: bin/redisbetween [OPTIONS] uri1 [uri2] ...
-  -localsocketprefix string
-    	prefix to use for unix socket filenames (default "/var/tmp/redisbetween-")
-  -localsocketsuffix string
-    	suffix to use for unix socket filenames (default ".sock")
   -loglevel string
     	one of: debug, info, warn, error, dpanic, panic, fatal (default "info")
-  -network string
-    	one of: tcp, tcp4, tcp6, unix or unixpacket (default "unix")
   -pretty
     	pretty print logging
   -statsd string
     	statsd address (default "localhost:8125")
-  -unlink
-    	unlink existing unix sockets before listening
+  -config
+    	location of the config json, can be local path or url
+  -pollInterval
+        the interval to poll the config in seconds. (default  30)
 ```
 
-Each URI can specify the following settings as GET params:
+Upstream can have the following properties:
 
-- `minpoolsize` sets the min connection pool size for this host. Defaults to 1
-- `maxpoolsize` sets the max connection pool size for this host. Defaults to 10
-- `label` optionally tags events and metrics for proxy activity on this host or cluster. Defaults to `""` (disabled)
+- `name` (required) sets the label for this upstream
+- `address` (required) the address where the upstream is listening
+- `database` the database to connect to for upstream redis
+- `minPoolSize` the min pool size. Defaults to 1
+- `maxPoolSize` the max pool size. Defaults to 10
 - `readtimeout` timeout for reads to this upstream. Defaults to 5s
 - `writetimeout` timeout for writes to this upstream. Defaults to 5s
 - `readonly` every connection issues a [READONLY](https://redis.io/commands/readonly) command before entering the pool. Defaults to false
+
+Listeners can have the following properties:
+
+- `network` one of: tcp, tcp4, tcp6, unix or unixpacket. Defaults to unix
+- `localsocketprefix` prefix to use for unix socket filenames. Defaults to "/var/tmp/redisbetween-"
+- `localsocketsuffix` suffix to use for unix socket filenames.Defaults to ".sock"
+- `target` (Required) name of the upstream to route requests to.
 - `maxsubscriptions` sets the max number of channels that can be subscribed to at one time. Defaults to 1.
 - `maxblockers` sets the max number of commands that can be blocking at one time. Defaults to 1. 
+- `unlink` unlink existing unix sockets before listening
+- `mirroring` allows for mirroring requests to different target upstream. It currently operates in fire and forget mode.
 
-Example: `./redisbetween -unlink -pretty -loglevel debug redis://localhost:7001?maxsubscriptions=2&maxblockers=2`
+Example: `./redisbetween -pretty -loglevel debug -config ./config.json`
+
+### Note:
+
+Currently only update to mirroring and target listener is applied while the proxy is running

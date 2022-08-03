@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"github.com/google/uuid"
 	"net"
 	"strings"
 	"testing"
@@ -27,18 +28,20 @@ func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
 	assert.NoError(t, err)
 
+	target := uuid.New().String()
 	l := &config.Listener{
+		Name:              target,
 		Network:           "unix",
 		LocalSocketPrefix: fmt.Sprintf("/var/tmp/redisbetween-%d-", id),
 		LocalSocketSuffix: ".sock",
-		Unlink:            true,
-		Mirroring:         mirroring,
-		Target:            "test",
+		Target:            target,
 		MaxSubscriptions:  1,
 		MaxBlockers:       1,
+		Unlink:            true,
+		Mirroring:         mirroring,
 	}
 	u := &config.Upstream{
-		Name:         "test",
+		Name:         target,
 		Address:      upstream,
 		Database:     db,
 		MinPoolSize:  1,

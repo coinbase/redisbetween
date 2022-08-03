@@ -14,7 +14,7 @@ type Options struct {
 	Pretty       bool
 	Statsd       string
 	Level        zapcore.Level
-	Url          string
+	ConfigUrl    string
 	PollInterval time.Duration
 }
 
@@ -30,7 +30,7 @@ func ParseFlags() (*Options, error) {
 	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
-	flag.StringVar(&configUrl, "url", "", "url to config file")
+	flag.StringVar(&configUrl, "config", "", "location of config file. can be local path or remote url")
 	flag.UintVar(&pollInterval, "pollinterval", 30, "poll interval for config in seconds")
 
 	// todo remove these flags in a follow up, after all envs have updated to the new url-param style of timeout config
@@ -56,7 +56,7 @@ func ParseFlags() (*Options, error) {
 		Pretty:       pretty,
 		Statsd:       stats,
 		Level:        level,
-		Url:          configUrl,
+		ConfigUrl:    configUrl,
 		PollInterval: time.Duration(pollInterval) * time.Second,
 	}, nil
 }

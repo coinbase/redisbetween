@@ -32,7 +32,7 @@ func TestLoadConfigFromAFile(t *testing.T) {
 		assert.NoError(t, os.Remove(f.Name()))
 	}()
 
-	opts := Options{Url: f.Name(), PollInterval: 1000}
+	opts := Options{ConfigUrl: f.Name(), PollInterval: 1000}
 	config, err := Load(context.WithValue(context.TODO(), utils.CtxLogKey, zap.L()), &opts)
 	assert.NoError(t, err)
 	defer config.Stop()
@@ -49,7 +49,7 @@ func TestPollConfigFromAFile(t *testing.T) {
 		assert.NoError(t, os.Remove(f.Name()))
 	}()
 
-	opts := Options{Url: f.Name(), PollInterval: 1}
+	opts := Options{ConfigUrl: f.Name(), PollInterval: 1}
 	config, err := Load(context.WithValue(context.TODO(), utils.CtxLogKey, zap.L()), &opts)
 	assert.NoError(t, err)
 	defer config.Stop()
@@ -75,7 +75,7 @@ func TestLoadConfigToReadUpstreamAndListeners(t *testing.T) {
 		assert.NoError(t, os.Remove(f.Name()))
 	}()
 
-	opts := Options{Url: f.Name(), PollInterval: 1000}
+	opts := Options{ConfigUrl: f.Name(), PollInterval: 1000}
 	config, err := Load(context.WithValue(context.TODO(), utils.CtxLogKey, zap.L()), &opts)
 	assert.NoError(t, err)
 	defer config.Stop()

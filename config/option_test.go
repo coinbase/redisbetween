@@ -42,7 +42,7 @@ func TestParseFlags(t *testing.T) {
 	assert.Equal(t, "statsd:1234", c.Statsd)
 	assert.Equal(t, zapcore.DebugLevel, c.Level)
 	assert.Equal(t, 10*time.Second, c.PollInterval)
-	assert.Equal(t, "/tmp/redisbetween/config.json", c.Url)
+	assert.Equal(t, "/tmp/redisbetween/config.json", c.ConfigUrl)
 }
 
 func TestInvalidLogLevel(t *testing.T) {
