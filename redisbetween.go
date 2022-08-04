@@ -20,11 +20,7 @@ import (
 const disconnectTimeout = 10 * time.Second
 
 func main() {
-	opts, err := config.ParseFlags()
-	if err != nil {
-		panic("Failed to parse flags")
-	}
-
+	opts := config.ParseFlags()
 	log := newLogger(opts.Level, opts.Pretty)
 	s := newStatsd(opts.Statsd, log)
 	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxStatsdKey, s), utils.CtxLogKey, log)

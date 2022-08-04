@@ -89,16 +89,88 @@ go install github.com/coinbase/redisbetween
 ### Usage
 ```
 Usage: bin/redisbetween [OPTIONS] uri1 [uri2] ...
+  -localsocketprefix string
+    	prefix to use for unix socket filenames (default "/var/tmp/redisbetween-")
+  -localsocketsuffix string
+    	suffix to use for unix socket filenames (default ".sock")
   -loglevel string
     	one of: debug, info, warn, error, dpanic, panic, fatal (default "info")
+  -network string
+    	one of: tcp, tcp4, tcp6, unix or unixpacket (default "unix")
   -pretty
     	pretty print logging
   -statsd string
     	statsd address (default "localhost:8125")
+  -unlink
+    	unlink existing unix sockets before listening
   -config
     	location of the config json, can be local path or url
   -pollInterval
         the interval to poll the config in seconds. (default  30)
+```
+
+Configuration can either be provided with config file or passing it as argument.
+
+#### Using Arguments
+This mode is used when the `-config` options is not provided. In this mode, it is expected that the upstream information
+is provided as argument as URIs. Each URI can specify the following settings as GET params:
+
+- `minpoolsize` sets the min connection pool size for this host. Defaults to 1
+- `maxpoolsize` sets the max connection pool size for this host. Defaults to 10
+- `label` optionally tags events and metrics for proxy activity on this host or cluster. Defaults to `""` (disabled)
+- `readtimeout` timeout for reads to this upstream. Defaults to 5s
+- `writetimeout` timeout for writes to this upstream. Defaults to 5s
+- `readonly` every connection issues a [READONLY](https://redis.io/commands/readonly) command before entering the pool. Defaults to false
+- `maxsubscriptions` sets the max number of channels that can be subscribed to at one time. Defaults to 1.
+- `maxblockers` sets the max number of commands that can be blocking at one time. Defaults to 1.
+
+Example: `./redisbetween -unlink -pretty -loglevel debug redis://localhost:7001?maxsubscriptions=2&maxblockers=2`
+
+#### Using Config File
+When `-config` is provided, the program ignores the upstream arguments and reads the that from the json file provided
+as argument. The config is polled from the source based on number of seconds specified in `-pollInterval` parameter.
+The json file should have the following format
+
+```json
+{
+  "upstreams": [
+    {
+      "name": "cluster1",
+      "address": "localhost:7001",
+      "database": 0,
+      "minPoolSize": 1,
+      "maxPoolSize": 10,
+      "readTimeout": "5s",
+      "writeTimeout": "5s",
+      "readonly": false
+    },
+    {
+      "name": "cluster2",
+      "address": "localhost:7006",
+      "database": 0,
+      "minPoolSize": 1,
+      "maxPoolSize": 10,
+      "readTimeout": "5s",
+      "writeTimeout": "5s",
+      "readonly": false
+    }
+  ],
+  "listeners": [
+    {
+      "name": "cluster1-listener",
+      "network": "unix",
+      "localSocketPrefix": "/var/tmp/redisbetween-",
+      "localSocketSuffix": ".sock",
+      "target": "cluster1",
+      "maxSubscriptions": 1,
+      "maxBlockers": 1,
+      "unlink": true,
+      "mirroring": {
+        "upstream": "cluster2"
+      }
+    }
+  ]
+}
 ```
 
 Upstream can have the following properties:
@@ -114,6 +186,7 @@ Upstream can have the following properties:
 
 Listeners can have the following properties:
 
+- `name` (required) sets the label for this listener
 - `network` one of: tcp, tcp4, tcp6, unix or unixpacket. Defaults to unix
 - `localsocketprefix` prefix to use for unix socket filenames. Defaults to "/var/tmp/redisbetween-"
 - `localsocketsuffix` suffix to use for unix socket filenames.Defaults to ".sock"
@@ -124,7 +197,5 @@ Listeners can have the following properties:
 - `mirroring` allows for mirroring requests to different target upstream. It currently operates in fire and forget mode.
 
 Example: `./redisbetween -pretty -loglevel debug -config ./config.json`
-
-### Note:
 
 Currently only update to mirroring and target listener is applied while the proxy is running

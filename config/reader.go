@@ -22,17 +22,56 @@ type DynamicConfig interface {
 	Stop()
 }
 
-type dynamicConfig struct {
-	current        *Config
-	version        Version
-	stop           chan<- bool
-	wg             *sync.WaitGroup
-	updateChannels []chan<- bool
-	sync.RWMutex
+func Load(ctx context.Context, opts *Options) (DynamicConfig, error) {
+	if opts.ConfigUrl == "" {
+		return newStaticConfig(ctx, opts)
+	}
+	return newDynamicConfig(ctx, opts)
 }
 
-func Load(ctx context.Context, opts *Options) (DynamicConfig, error) {
-	return newDynamicConfig(ctx, opts)
+func newStaticConfig(_ context.Context, opts *Options) (*staticConfig, error) {
+	var listeners []*Listener
+	var upstreams []*Upstream
+
+	for _, u := range opts.Upstreams {
+		upstreams = append(upstreams, &Upstream{
+			Name:         u.Label,
+			Address:      u.UpstreamConfigHost,
+			Database:     u.Database,
+			MaxPoolSize:  u.MaxPoolSize,
+			MinPoolSize:  u.MinPoolSize,
+			ReadTimeout:  u.ReadTimeout,
+			WriteTimeout: u.WriteTimeout,
+			Readonly:     u.Readonly,
+		})
+
+		listeners = append(listeners, &Listener{
+			Name:              u.Label,
+			Network:           opts.Network,
+			LocalSocketPrefix: opts.LocalSocketPrefix,
+			LocalSocketSuffix: opts.LocalSocketSuffix,
+			LogLevel:          opts.Level,
+			Target:            u.Label,
+			MaxSubscriptions:  u.MaxSubscriptions,
+			MaxBlockers:       u.MaxBlockers,
+			Unlink:            opts.Unlink,
+			Mirroring:         nil,
+		})
+	}
+
+	currentConfig := &Config{
+		Pretty:    opts.Pretty,
+		Statsd:    opts.Statsd,
+		Level:     opts.Level,
+		Listeners: listeners,
+		Upstreams: upstreams,
+	}
+
+	return &staticConfig{
+		current:       currentConfig,
+		version:       Version(time.Now().UnixMilli()),
+		updateChannel: make(chan bool),
+	}, nil
 }
 
 func newDynamicConfig(ctx context.Context, opts *Options) (*dynamicConfig, error) {
@@ -68,10 +107,9 @@ func newDynamicConfig(ctx context.Context, opts *Options) (*dynamicConfig, error
 	}(configUpdate, stop)
 
 	go func(opts *Options, updateChannel chan<- *Config, stopChannel <-chan bool) {
-		log := log.With(zap.String("process", "config_poller"))
-
 		defer wg.Done()
-		defer close(updateChannel)
+
+		log := log.With(zap.String("process", "config_poller"))
 
 		interval := opts.PollInterval
 		lastHash := currentHash
@@ -97,6 +135,33 @@ func newDynamicConfig(ctx context.Context, opts *Options) (*dynamicConfig, error
 	}(opts, configUpdate, stop)
 
 	return dyn, nil
+}
+
+type staticConfig struct {
+	current       *Config
+	version       Version
+	updateChannel chan bool
+}
+
+func (s *staticConfig) Config() (*Config, Version) {
+	return s.current, s.version
+}
+
+func (s *staticConfig) OnUpdate() <-chan bool {
+	return s.updateChannel
+}
+
+func (s *staticConfig) Stop() {
+	close(s.updateChannel)
+}
+
+type dynamicConfig struct {
+	current        *Config
+	version        Version
+	stop           chan<- bool
+	wg             *sync.WaitGroup
+	updateChannels []chan<- bool
+	sync.RWMutex
 }
 
 func readConfig(opts *Options, log *zap.Logger) (*Config, string, error) {
@@ -162,7 +227,7 @@ func (d *dynamicConfig) updateConfig(c *Config) {
 	d.version = Version(time.Now().UnixMilli())
 
 	// Prevent blocking in case the channel is not consumed.
-	// Since the channel already has update
+	// Since the channel already has an update
 	for _, channel := range d.updateChannels {
 		select {
 		case channel <- true:
@@ -172,8 +237,6 @@ func (d *dynamicConfig) updateConfig(c *Config) {
 }
 
 func (d *dynamicConfig) OnUpdate() <-chan bool {
-	d.Lock()
-	defer d.Unlock()
 	channel := make(chan bool, 1)
 
 	d.updateChannels = append(d.updateChannels, channel)
@@ -187,8 +250,6 @@ func (d *dynamicConfig) Config() (*Config, Version) {
 }
 
 func (d *dynamicConfig) Stop() {
-	d.Lock()
-	defer d.Unlock()
 	defer d.wg.Wait()
 
 	d.updateChannels = nil
