@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"github.com/coinbase/redisbetween/config"
 	redis2 "github.com/coinbase/redisbetween/redis"
 	"github.com/coinbase/redisbetween/utils"
@@ -19,7 +20,7 @@ import (
 // a standalone redis on port 7006. see docker-compose.yml
 
 func TestProxy(t *testing.T) {
-	sd := SetupProxy(t, "7006", -1, nil)
+	sd, _ := SetupProxy(t, "7006", -1, nil)
 
 	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7006.sock")
 	res := client.Do(context.Background(), "del", "hello")
@@ -35,15 +36,19 @@ func TestProxy(t *testing.T) {
 }
 
 func TestRequestMirroring(t *testing.T) {
+	key := uuid.New().String()
+	value := uuid.New().String()
+
 	mirror := redis.NewClient(&redis.Options{Addr: utils.RedisHost() + ":7007"})
 	defer func() {
 		_ = mirror.Close()
 	}()
-	res := mirror.Do(context.Background(), "DEL", "hello_mirror")
+
+	res := mirror.Do(context.Background(), "DEL", key)
 	assert.NoError(t, res.Err())
 
 	mirroring := config.RequestMirrorPolicy{Upstream: utils.RedisHost() + ":7007"}
-	shutdown := SetupProxy(t, "7006", -1, &mirroring)
+	shutdown, _ := SetupProxy(t, "7006", -1, &mirroring)
 	defer func() {
 		shutdown()
 	}()
@@ -52,16 +57,73 @@ func TestRequestMirroring(t *testing.T) {
 	defer func() {
 		_ = client.Close()
 	}()
-	res = client.Do(context.Background(), "DEL", "hello_mirror")
+	res = client.Do(context.Background(), "DEL", key)
 	assert.NoError(t, res.Err())
 
-	res = client.Do(context.Background(), "SET", "hello_mirror", "world")
+	res = client.Do(context.Background(), "SET", key, value)
 	assert.NoError(t, res.Err())
 
 	time.Sleep(1 * time.Second)
-	res = mirror.Do(context.Background(), "GET", "hello_mirror")
+	res = mirror.Do(context.Background(), "GET", key)
 	assert.NoError(t, res.Err())
-	assert.Equal(t, "GET hello_mirror: world", res.String())
+	assert.Equal(t, fmt.Sprintf("GET %s: %s", key, value), res.String())
+}
+
+func TestMirroringDynamicBehaviour(t *testing.T) {
+	key := uuid.New().String()
+	value := uuid.New().String()
+
+	mirror := redis.NewClient(&redis.Options{Addr: utils.RedisHost() + ":7007"})
+	defer func() {
+		_ = mirror.Close()
+	}()
+
+	res := mirror.Do(context.Background(), "SET", key, "world")
+	assert.NoError(t, res.Err())
+
+	shutdown, proxy := SetupProxy(t, "7006", -1, &config.RequestMirrorPolicy{Upstream: utils.RedisHost() + ":7007"})
+	defer func() {
+		shutdown()
+	}()
+
+	err := proxy.Update(&config.Listener{
+		Name:      proxy.listenerConfig.Name,
+		Target:    proxy.listenerConfig.Target,
+		Mirroring: nil,
+	})
+	assert.NoError(t, err)
+
+	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7006.sock")
+	defer func() {
+		_ = client.Close()
+	}()
+	res = client.Do(context.Background(), "DEL", key)
+	assert.NoError(t, res.Err())
+
+	res = client.Do(context.Background(), "SET", key, value)
+	assert.NoError(t, res.Err())
+
+	<-time.After(1 * time.Second)
+	res = mirror.Do(context.Background(), "GET", key)
+	assert.NoError(t, res.Err())
+	assert.NotEqual(t, fmt.Sprintf("GET %s: %s", key, value), res.String())
+
+	err = proxy.Update(&config.Listener{
+		Name:      proxy.listenerConfig.Name,
+		Target:    proxy.listenerConfig.Target,
+		Mirroring: &config.RequestMirrorPolicy{Upstream: utils.RedisHost() + ":7007"},
+	})
+	assert.NoError(t, err)
+
+	<-time.After(1 * time.Second)
+
+	newValue := uuid.New().String()
+	res = client.Do(context.Background(), "SET", key, newValue)
+	assert.NoError(t, res.Err())
+	<-time.After(1 * time.Second)
+	res = mirror.Do(context.Background(), "GET", key)
+	assert.NoError(t, res.Err())
+	assert.Equal(t, fmt.Sprintf("GET %s: %s", key, newValue), res.String())
 }
 
 type command struct {
@@ -71,7 +133,7 @@ type command struct {
 }
 
 func TestIntegrationCommands(t *testing.T) {
-	shutdownProxy := SetupProxy(t, "7000", -1, nil)
+	shutdownProxy, _ := SetupProxy(t, "7000", -1, nil)
 	clusterClient := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7000.sock", false, 1)
 	var i int
 	var wg sync.WaitGroup
@@ -101,7 +163,7 @@ func TestIntegrationCommands(t *testing.T) {
 }
 
 func TestPipelinedCommands(t *testing.T) {
-	shutdownProxy := SetupProxy(t, "7006", 3, nil)
+	shutdownProxy, _ := SetupProxy(t, "7006", 3, nil)
 	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7006-3.sock")
 	var i int
 	var wg sync.WaitGroup
@@ -134,7 +196,7 @@ func TestPipelinedCommands(t *testing.T) {
 }
 
 func TestDbSelectCommand(t *testing.T) {
-	shutdown := SetupProxy(t, "7006", 3, nil)
+	shutdown, _ := SetupProxy(t, "7006", 3, nil)
 	client := SetupStandaloneClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7006-3.sock")
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())
@@ -143,7 +205,7 @@ func TestDbSelectCommand(t *testing.T) {
 }
 
 func TestReadonlyCommand(t *testing.T) {
-	shutdown := SetupProxyAdvancedConfig(t, utils.RedisHost()+":7000", -1, 1, 1, true, nil)
+	shutdown, _ := SetupProxyAdvancedConfig(t, utils.RedisHost()+":7000", -1, 1, 1, true, nil)
 	client := SetupClusterClient(t, "/var/tmp/redisbetween-1-"+utils.RedisHost()+"-7000-ro.sock", true, 1)
 	res := client.Do(context.Background(), "CLIENT", "LIST")
 	assert.NoError(t, res.Err())

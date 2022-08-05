@@ -24,7 +24,7 @@ func TestBasicBRPOPLPUSH(t *testing.T) {
 
 	// Setup
 	id := randomInteger()
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 	client := setupStandaloneClient(t, id)
 
 	defer sd()
@@ -75,7 +75,7 @@ func TestMultipleBlockingClients(t *testing.T) {
 
 	// Setup
 	id := randomInteger()
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 
 	defer sd()
 

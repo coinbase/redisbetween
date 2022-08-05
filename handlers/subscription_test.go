@@ -22,7 +22,7 @@ func TestOneSubscription(t *testing.T) {
 	id := randomInteger()
 
 	// Setup
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 	defer sd()
 	subClient := setupStandaloneClient(t, id)
 	defer cleanupClient(t, subClient)
@@ -56,7 +56,7 @@ func TestMultiSubscription(t *testing.T) {
 	id := randomInteger()
 
 	// Setup
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 	defer sd()
 
 	pubClient := setupStandaloneClient(t, id)
@@ -107,7 +107,7 @@ func TestClusteredSubscribe(t *testing.T) {
 	address := fmt.Sprintf("/var/tmp/redisbetween-%d-"+utils.RedisHost()+"-7000.sock", id)
 
 	// Setup
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7000", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7000", -1, 2, id, false, nil)
 	defer sd()
 	subClient := proxy.SetupClusterClient(t, address, false, id)
 	defer subClient.Close()
@@ -138,7 +138,7 @@ func TestSubscribeAfterPublish(t *testing.T) {
 	chName := "TestSubscribeAfterPublish"
 	id := randomInteger()
 
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 	defer sd()
 	pubClient := setupStandaloneClient(t, id)
 	defer cleanupClient(t, pubClient)
@@ -166,7 +166,7 @@ func TestUnsubscribe(t *testing.T) {
 	id := randomInteger()
 
 	// Setup
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 	defer sd()
 	subClient := setupStandaloneClient(t, id)
 	defer cleanupClient(t, subClient)
@@ -201,7 +201,7 @@ func TestMaxSubscriptions(t *testing.T) {
 	ctx := context.Background()
 	id := randomInteger()
 
-	sd := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
+	sd, _ := proxy.SetupProxyAdvancedConfig(t, utils.RedisHost()+":7006", -1, 2, id, false, nil)
 	defer sd()
 	subClient1 := setupStandaloneClient(t, id)
 	defer cleanupClient(t, subClient1)

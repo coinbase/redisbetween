@@ -17,11 +17,11 @@ import (
 	"go.uber.org/zap"
 )
 
-func SetupProxy(t *testing.T, upstreamPort string, db int, mirroring *config.RequestMirrorPolicy) func() {
+func SetupProxy(t *testing.T, upstreamPort string, db int, mirroring *config.RequestMirrorPolicy) (func(), *Proxy) {
 	return SetupProxyAdvancedConfig(t, utils.RedisHost()+":"+upstreamPort, db, 1, 1, false, mirroring)
 }
 
-func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize int, id int, readonly bool, mirroring *config.RequestMirrorPolicy) func() {
+func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize int, id int, readonly bool, mirroring *config.RequestMirrorPolicy) (func(), *Proxy) {
 	t.Helper()
 
 	sd, err := statsd.New("localhost:8125")
@@ -69,7 +69,7 @@ func SetupProxyAdvancedConfig(t *testing.T, upstream string, db int, maxPoolSize
 
 	return func() {
 		proxy.Shutdown()
-	}
+	}, proxy
 }
 
 func SetupStandaloneClient(t *testing.T, address string) *redis.Client {
