@@ -1,4 +1,4 @@
-package messenger
+package redis
 
 import (
 	"bytes"
@@ -7,21 +7,20 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/redis"
 	"go.uber.org/zap"
 )
 
 type Messenger interface {
-	Read (ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*redis.Message, error)
-	Write (ctx context.Context, log *zap.Logger, wm []*redis.Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, wrapPipeline bool, close func() error) error
+	Read(ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*Message, error)
+	Write(ctx context.Context, log *zap.Logger, wm []*Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, wrapPipeline bool, close func() error) error
 }
 
-type WireMessenger struct { }
+type WireMessenger struct{}
 
 var PipelineSignalStartKey = []byte("🔜")
 var PipelineSignalEndKey = []byte("🔚")
 
-func (m WireMessenger) Read (ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*redis.Message, error) {
+func (m WireMessenger) Read(ctx context.Context, _ *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*Message, error) {
 	select {
 	case <-ctx.Done():
 		// We closeConnection the connection because we don't know if there is an unread message on the wire.
@@ -43,9 +42,9 @@ func (m WireMessenger) Read (ctx context.Context, log *zap.Logger, nc net.Conn, 
 		return nil, pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "failed to set read deadline"}
 	}
 
-	d := redis.NewDecoder(nc)
+	d := NewDecoder(nc)
 	var pipelineOpen bool
-	wm := make([]*redis.Message, 0)
+	wm := make([]*Message, 0)
 	for i := 0; i < readMin || (pipelineOpen && checkPipelineSignals); i++ {
 		m, err := d.Decode()
 		if err != nil {
@@ -63,7 +62,7 @@ func (m WireMessenger) Read (ctx context.Context, log *zap.Logger, nc net.Conn, 
 	return wm, nil
 }
 
-func (m WireMessenger) Write(ctx context.Context, log *zap.Logger, wm []*redis.Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, wrapPipeline bool, close func() error) error {
+func (m WireMessenger) Write(ctx context.Context, log *zap.Logger, wm []*Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, wrapPipeline bool, close func() error) error {
 	var err error
 	select {
 	case <-ctx.Done():
@@ -85,13 +84,13 @@ func (m WireMessenger) Write(ctx context.Context, log *zap.Logger, wm []*redis.M
 	}
 
 	if wrapPipeline { // make dummy messages to pad out the pipeline signal responses
-		s := redis.NewBulkBytes(nil) // redis nil response ($-1\r\n)
-		e := redis.NewBulkBytes(nil) // redis nil response ($-1\r\n)
-		wm = append(append([]*redis.Message{s}, wm...), e)
+		s := NewBulkBytes(nil) // redis nil response ($-1\r\n)
+		e := NewBulkBytes(nil) // redis nil response ($-1\r\n)
+		wm = append(append([]*Message{s}, wm...), e)
 	}
 
 	for _, m := range wm {
-		err = redis.Encode(nc, m)
+		err = Encode(nc, m)
 		if err != nil {
 			_ = close()
 			return pool.ConnectionError{Address: address, ID: id, Wrapped: err, Message: "unable to write wire message to network"}
@@ -103,17 +102,16 @@ func (m WireMessenger) Write(ctx context.Context, log *zap.Logger, wm []*redis.M
 }
 
 // any message of length 2 (GET, for example) that passes the signal as its only argument
-func isSignalMessage(m *redis.Message, signal []byte) bool {
+func isSignalMessage(m *Message, signal []byte) bool {
 	return len(m.Array) == 2 && bytes.Equal(signal, m.Array[1].Value)
 }
 
-
 // slightly more optimized than `append` for building message slices
-func appendMessage(slice []*redis.Message, data ...*redis.Message) []*redis.Message {
+func appendMessage(slice []*Message, data ...*Message) []*Message {
 	m := len(slice)
 	n := m + len(data)
 	if n > cap(slice) { // if necessary, reallocate. allocate double what's needed
-		newSlice := make([]*redis.Message, (n+1)*2)
+		newSlice := make([]*Message, (n+1)*2)
 		copy(newSlice, slice)
 		slice = newSlice
 	}

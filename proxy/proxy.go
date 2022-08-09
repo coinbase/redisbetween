@@ -4,10 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
+	"github.com/coinbase/redisbetween/utils"
 	"net"
-	"regexp"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/listener"
-	"github.com/coinbase/memcachedbetween/pool"
 	"github.com/coinbase/mongobetween/util"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/handlers"
@@ -27,62 +26,54 @@ import (
 )
 
 const restartSleep = 1 * time.Second
-const disconnectTimeout = 10 * time.Second
 
 type Proxy struct {
 	log    *zap.Logger
 	statsd *statsd.Client
 
-	config *config.Config
-
-	upstreamConfigHost string
-	localConfigHost    string
-	maxPoolSize        int
-	minPoolSize        int
-	readTimeout        time.Duration
-	writeTimeout       time.Duration
-	database           int
-	readonly           bool
+	config *config.Listener
+	lookup UpstreamManager
 
 	quit chan interface{}
 	kill chan interface{}
 
-	listeners    map[string]*listener.Listener
-	listenerLock sync.Mutex
-	listenerWg   sync.WaitGroup
+	listeners      map[string]*listener.Listener
+	listenerConfig map[string]*config.Listener
+	listenerLock   sync.Mutex
+	listenerWg     sync.WaitGroup
 
 	reservations *handlers.Reservations
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int) (*Proxy, error) {
-	if label != "" {
-		log = log.With(zap.String("cluster", label))
+func NewProxy(ctx context.Context, listenerConfig *config.Listener, lookup UpstreamManager) (*Proxy, error) {
+	cfg := &config.Listener{}
+	*cfg = *listenerConfig
+
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
+
+	if cfg.Name != "" {
+		log = log.With(zap.String("cluster", cfg.Name))
 
 		var err error
-		sd, err = util.StatsdWithTags(sd, []string{fmt.Sprintf("cluster:%s", label)})
+		sd, err = util.StatsdWithTags(sd, []string{fmt.Sprintf("cluster:%s", cfg.Name)})
 		if err != nil {
 			return nil, err
 		}
 	}
+
 	return &Proxy{
 		log:    log,
 		statsd: sd,
-		config: config,
-
-		upstreamConfigHost: upstreamHost,
-		localConfigHost:    localSocketPathFromUpstream(upstreamHost, database, readonly, config.LocalSocketPrefix, config.LocalSocketSuffix),
-		minPoolSize:        minPoolSize,
-		maxPoolSize:        maxPoolSize,
-		readTimeout:        readTimeout,
-		writeTimeout:       writeTimeout,
-		database:           database,
-		readonly:           readonly,
+		config: cfg,
+		lookup: lookup,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
 
-		listeners:    make(map[string]*listener.Listener),
-		reservations: handlers.NewReservations(maxSub, maxBlk, sd),
+		listeners:      make(map[string]*listener.Listener),
+		listenerConfig: make(map[string]*config.Listener),
+		reservations:   handlers.NewReservations(cfg.MaxSubscriptions, cfg.MaxBlockers, sd),
 	}, nil
 }
 
@@ -134,7 +125,15 @@ func (p *Proxy) run() error {
 		}
 	}()
 
-	l, err := p.createListener(p.localConfigHost, p.upstreamConfigHost)
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, p.log), utils.CtxStatsdKey, p.statsd)
+	upstreamConfig, ok := p.lookup.ConfigByName(ctx, p.config.Target)
+
+	if !ok {
+		return errors.New(fmt.Sprintf("Missing upstream config: %v", p.config.Target))
+	}
+
+	localSocket := localSocketPathFromUpstream(upstreamConfig.Address, upstreamConfig.Database, upstreamConfig.Readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+	l, err := NewListener(ctx, localSocket, p.config, p.lookup, p.interceptMessages, p.reservations, p.quit)
 	if err != nil {
 		return err
 	}
@@ -143,7 +142,8 @@ func (p *Proxy) run() error {
 	}()
 
 	p.listenerLock.Lock()
-	p.listeners[p.upstreamConfigHost] = l
+	p.listeners[localSocket] = l
+	p.listenerConfig[localSocket] = p.config
 	for _, l := range p.listeners {
 		p.runListener(l)
 	}
@@ -224,121 +224,66 @@ func localSocketPathFromUpstream(upstream string, database int, readonly bool, p
 }
 
 func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
-	p.log.Info("ensuring we have a listener for", zap.String("upstream", upstream), zap.String("command", originalCmd))
+	log := p.log.With(zap.String("upstream", upstream), zap.String("command", originalCmd))
+	log.Info("ensuring we have a listener for")
+
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
-	_, ok := p.listeners[upstream]
+
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, p.statsd)
+	cfg, ok := p.lookup.ConfigByName(ctx, p.config.Target)
+
 	if !ok {
-		local := localSocketPathFromUpstream(upstream, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
-		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local), zap.String("command", originalCmd))
-		l, err := p.createListener(local, upstream)
+		log.Error("failed to find upstream", zap.String("target", p.config.Target))
+		return
+	}
+
+	upstreamConfig := &config.Upstream{}
+	*upstreamConfig = *cfg
+	upstreamConfig.Name = upstream
+	upstreamConfig.Address = upstream
+
+	err := p.lookup.Add(ctx, upstreamConfig)
+
+	if err != nil {
+		log.Error("failed to register upstream", zap.Error(err))
+	}
+
+	localSocket := localSocketPathFromUpstream(upstreamConfig.Address, upstreamConfig.Database, upstreamConfig.Readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+	_, ok = p.listeners[localSocket]
+	if !ok {
+		log.Info("did not find listener, creating new one", zap.String("local", localSocket))
+
+		listenerConfig := &config.Listener{}
+		*listenerConfig = *p.config
+		listenerConfig.Name = upstreamConfig.Name
+		listenerConfig.Target = upstreamConfig.Name
+
+		l, err := NewListener(ctx, localSocket, listenerConfig, p.lookup, p.interceptMessages, p.reservations, p.quit)
 		if err != nil {
 			p.log.Error("unable to create listener", zap.Error(err))
 		}
-		p.listeners[upstream] = l
+		p.listeners[localSocket] = l
+		p.listenerConfig[localSocket] = listenerConfig
 		p.runListener(l)
 	}
 }
 
-func (p *Proxy) createListener(local, upstream string) (*listener.Listener, error) {
-	logWith := p.log.With(zap.String("upstream", upstream), zap.String("local", local))
-	sdWith, err := util.StatsdWithTags(p.statsd, []string{fmt.Sprintf("upstream:%s", upstream), fmt.Sprintf("local:%s", local)})
-	if err != nil {
-		return nil, err
-	}
-	opts := []pool.ServerOption{
-		pool.WithMinConnections(func(uint64) uint64 { return uint64(p.minPoolSize) }),
-		pool.WithMaxConnections(func(uint64) uint64 { return uint64(p.maxPoolSize) }),
-		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sdWith) }),
-	}
+func NewListener(ctx context.Context, localSocket string, cfg *config.Listener, lookup handlers.UpstreamLookup, interceptor handlers.MessageInterceptor, r *handlers.Reservations, quit chan interface{}) (*listener.Listener, error) {
+	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
 
-	var initCommand []byte
+	logWith := log.With(zap.String("upstream", cfg.Target), zap.String("local", localSocket))
+	sdWith, err := util.StatsdWithTags(sd, []string{fmt.Sprintf("upstream:%s", cfg.Target), fmt.Sprintf("local:%s", localSocket)})
 
-	if p.database > -1 {
-		// if a db number has been specified, we need to issue a SELECT command before adding
-		// that connection to the pool, so it's always pinned to the right db
-		d := strconv.Itoa(p.database)
-		initCommand = []byte("*2\r\n$6\r\nSELECT\r\n$" + strconv.Itoa(len(d)) + "\r\n" + d + "\r\n")
-	} else if p.readonly {
-		// if this pool is designated for replica reads, we need to set the READONLY flag on
-		// the upstream connection before adding it to the pool. this is only supported by
-		// clustered redis, so it cannot be combined with SELECT.
-		initCommand = []byte("*1\r\n$8\r\nREADONLY\r\n")
-	}
-
-	if initCommand != nil {
-		co := connectWithInitCommand(initCommand, logWith)
-		opts = append(opts, pool.WithConnectionOptions(func(cos ...pool.ConnectionOption) []pool.ConnectionOption {
-			return append(cos, co)
-		}))
-	}
-
-	s, err := pool.ConnectServer(pool.Address(upstream), opts...)
 	if err != nil {
 		return nil, err
 	}
 
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
-		handlers.CommandConnection(log, p.statsd, conn, local, p.readTimeout, p.writeTimeout, id, s, kill, p.quit, p.interceptMessages, p.reservations)
+		handlers.CommandConnection(log, sdWith, conn, localSocket, id, kill, quit, interceptor, r, lookup, cfg)
 	}
-	shutdownHandler := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), disconnectTimeout)
-		defer cancel()
-		_ = s.Disconnect(ctx)
-	}
+	shutdownHandler := func() {}
 
-	return listener.New(logWith, sdWith, p.config.Network, local, p.config.Unlink, connectionHandler, shutdownHandler)
-}
-
-func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
-	co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
-		return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
-			dlr := &net.Dialer{Timeout: 30 * time.Second}
-			conn, err := dlr.DialContext(ctx, network, address)
-			if err != nil {
-				return nil, err
-			}
-			_, err = conn.Write(command)
-			if err != nil {
-				logWith.Error("failed to write command", zap.Error(err))
-				return nil, err
-			}
-			res := make([]byte, 5)
-			_, err = io.ReadFull(conn, res)
-			if err != nil || string(res) != "+OK\r\n" {
-				logWith.Error("failed to read response", zap.Error(err), zap.String("response", string(res)))
-				return nil, err
-			}
-			return conn, err
-		})
-	})
-	return co
-}
-
-func poolMonitor(sd *statsd.Client) *pool.Monitor {
-	checkedOut, checkedIn := util.StatsdBackgroundGauge(sd, "pool.checked_out_connections", []string{})
-	opened, closed := util.StatsdBackgroundGauge(sd, "pool.open_connections", []string{})
-
-	return &pool.Monitor{
-		Event: func(e *pool.Event) {
-			snake := strings.ToLower(regexp.MustCompile("([a-z0-9])([A-Z])").ReplaceAllString(e.Type, "${1}_${2}"))
-			name := fmt.Sprintf("pool_event.%s", snake)
-			tags := []string{
-				fmt.Sprintf("address:%s", e.Address),
-				fmt.Sprintf("reason:%s", e.Reason),
-			}
-			switch e.Type {
-			case pool.ConnectionCreated:
-				opened(name, tags)
-			case pool.ConnectionClosed:
-				closed(name, tags)
-			case pool.GetSucceeded:
-				checkedOut(name, tags)
-			case pool.ConnectionReturned:
-				checkedIn(name, tags)
-			default:
-				_ = sd.Incr(name, tags, 1)
-			}
-		},
-	}
+	return listener.New(logWith, sdWith, cfg.Network, localSocket, cfg.Unlink, connectionHandler, shutdownHandler)
 }

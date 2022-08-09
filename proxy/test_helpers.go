@@ -3,6 +3,8 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"github.com/coinbase/redisbetween/utils"
+	"github.com/google/uuid"
 	"net"
 	"os"
 	"strings"
@@ -36,15 +38,37 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 	sd, err := statsd.New("localhost:8125")
 	assert.NoError(t, err)
 
-	cfg := &config.Config{
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
+
+	target := uuid.New().String()
+	l := &config.Listener{
+		Name:              target,
 		Network:           "unix",
 		LocalSocketPrefix: fmt.Sprintf("/var/tmp/redisbetween-%d-", id),
 		LocalSocketSuffix: ".sock",
+		Target:            target,
+		MaxSubscriptions:  1,
+		MaxBlockers:       1,
 		Unlink:            true,
 	}
+	u := &config.Upstream{
+		Name:         target,
+		Address:      uri,
+		Database:     db,
+		MinPoolSize:  1,
+		MaxPoolSize:  maxPoolSize,
+		Readonly:     readonly,
+		ReadTimeout:  1 * time.Second,
+		WriteTimeout: 1 * time.Second,
+	}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1)
+	lookup := NewUpstreamManager()
+	err = lookup.Add(ctx, u)
 	assert.NoError(t, err)
+
+	proxy, err := NewProxy(ctx, l, lookup)
+	assert.NoError(t, err)
+
 	go func() {
 		err := proxy.Run()
 		assert.NoError(t, err)

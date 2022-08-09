@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/messenger"
 	"github.com/coinbase/redisbetween/redis"
 	"go.uber.org/zap"
 )
@@ -31,7 +30,7 @@ type blocker struct {
 
 	ctx       context.Context
 	upstream  pool.ConnectionWrapper
-	messenger messenger.Messenger
+	messenger redis.Messenger
 	queue     []*blockingCommand
 	parent    *Reservations
 

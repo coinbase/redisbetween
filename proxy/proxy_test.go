@@ -2,11 +2,11 @@ package proxy
 
 import (
 	"context"
+	redis2 "github.com/coinbase/redisbetween/redis"
 	"strconv"
 	"sync"
 	"testing"
 
-	"github.com/coinbase/redisbetween/messenger"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )
@@ -75,7 +75,7 @@ func TestPipelinedCommands(t *testing.T) {
 		go func(index int, t *testing.T) {
 			var j int
 			ind := strconv.Itoa(index)
-			commands := []command{{cmd: "get", args: []string{string(messenger.PipelineSignalStartKey)}, res: "get 🔜: redis: nil"}}
+			commands := []command{{cmd: "get", args: []string{string(redis2.PipelineSignalStartKey)}, res: "get 🔜: redis: nil"}}
 			for {
 				j++
 				if j == 20 {
@@ -85,7 +85,7 @@ func TestPipelinedCommands(t *testing.T) {
 				commands = append(commands, command{cmd: "set", args: []string{s, "hi"}, res: "set " + s + " hi: OK"})
 				commands = append(commands, command{cmd: "get", args: []string{s}, res: "get " + s + ": hi"})
 			}
-			commands = append(commands, command{cmd: "get", args: []string{string(messenger.PipelineSignalEndKey)}, res: "get 🔚: redis: nil"})
+			commands = append(commands, command{cmd: "get", args: []string{string(redis2.PipelineSignalEndKey)}, res: "get 🔚: redis: nil"})
 			assertResponsePipelined(t, commands, client)
 			wg.Done()
 		}(i, t)

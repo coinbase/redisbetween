@@ -34,8 +34,8 @@ func TestParseFlags(t *testing.T) {
 	}
 
 	minPoolEnvVar := "TestParseFlags_MinPoolSize"
-	os.Setenv(minPoolEnvVar, "10")
-	defer os.Unsetenv(minPoolEnvVar)
+	_ = os.Setenv(minPoolEnvVar, "10")
+	defer assert.NoError(t, os.Unsetenv(minPoolEnvVar))
 
 	resetFlags()
 	c, err := parseFlags()
@@ -65,7 +65,7 @@ func TestParseFlags(t *testing.T) {
 
 	assert.Equal(t, "cluster2", upstream2.Label)
 	assert.Equal(t, "localhost:7002", upstream2.UpstreamConfigHost)
-	assert.Equal(t, 10, upstream2.MinPoolSize)
+	assert.Equal(t, 1, upstream2.MinPoolSize)
 	assert.Equal(t, 3*time.Second, upstream2.ReadTimeout)
 	assert.Equal(t, 6*time.Second, upstream2.WriteTimeout)
 }

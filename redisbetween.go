@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"github.com/DataDog/datadog-go/statsd"
+	"github.com/coinbase/redisbetween/utils"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/proxy"
 	"go.uber.org/zap"
@@ -16,12 +18,22 @@ import (
 )
 
 func main() {
-	c := config.ParseFlags()
-	log := newLogger(c.Level, c.Pretty)
-	err := run(log, c)
+	opts := config.ParseFlags()
+	log := newLogger(opts.Level, opts.Pretty)
+	sd := newStatsd(opts.Statsd, log)
+
+	err := run(log, sd, opts)
 	if err != nil {
 		log.Panic("error", zap.Error(err))
 	}
+}
+
+func newStatsd(addr string, log *zap.Logger) *statsd.Client {
+	s, err := statsd.New(addr, statsd.WithNamespace("redisbetween"))
+	if err != nil {
+		log.Panic("Failed to initialize statsd", zap.Error(err))
+	}
+	return s
 }
 
 func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
@@ -45,8 +57,21 @@ func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
 	return log
 }
 
-func run(log *zap.Logger, cfg *config.Config) error {
-	proxies, err := proxies(cfg, log)
+func run(log *zap.Logger, sd *statsd.Client, opts *config.Options) error {
+	cfg, err := config.BuildFromOptions(context.Background(), opts)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, sd)
+	upstreamManager := proxy.NewUpstreamManager()
+	for _, u := range cfg.Upstreams {
+		if err := upstreamManager.Add(ctx, u); err != nil {
+			log.Error("failed to initialize upstream", zap.String("upstream", u.Name))
+		}
+	}
+
+	proxies, err := proxies(ctx, &cfg, upstreamManager)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -85,17 +110,9 @@ func run(log *zap.Logger, cfg *config.Config) error {
 	return nil
 }
 
-func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err error) {
-	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redisbetween"))
-	if err != nil {
-		return nil, err
-	}
-	for _, u := range c.Upstreams {
-		p, err := proxy.NewProxy(
-			log, s, c, u.Label, u.UpstreamConfigHost, u.Database,
-			u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout,
-			u.Readonly, u.MaxSubscriptions, u.MaxBlockers,
-		)
+func proxies(ctx context.Context, c *config.Config, manager proxy.UpstreamManager) (proxies []*proxy.Proxy, err error) {
+	for _, l := range c.Listeners {
+		p, err := proxy.NewProxy(ctx, l, manager)
 
 		if err != nil {
 			return nil, err

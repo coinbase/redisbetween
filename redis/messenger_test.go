@@ -1,4 +1,4 @@
-package messenger
+package redis
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coinbase/redisbetween/redis"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
 )
@@ -91,15 +90,15 @@ func testReadWireMessagesHelper(t *testing.T, readMin int, checkPipelineSignals 
 }
 
 func TestWriteWireMessagesNoPipelineWrapping(t *testing.T) {
-	commands := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("SET")),
-			redis.NewBulkBytes([]byte("hi")),
-			redis.NewBulkBytes([]byte("1")),
+	commands := []*Message{
+		NewArray([]*Message{
+			NewBulkBytes([]byte("SET")),
+			NewBulkBytes([]byte("hi")),
+			NewBulkBytes([]byte("1")),
 		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("GET")),
-			redis.NewBulkBytes([]byte("hi")),
+		NewArray([]*Message{
+			NewBulkBytes([]byte("GET")),
+			NewBulkBytes([]byte("hi")),
 		}),
 	}
 	expected := []string{
@@ -110,15 +109,15 @@ func TestWriteWireMessagesNoPipelineWrapping(t *testing.T) {
 }
 
 func TestWriteWireMessagesWithPipelineWrapping(t *testing.T) {
-	commands := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("SET")),
-			redis.NewBulkBytes([]byte("hi")),
-			redis.NewBulkBytes([]byte("1")),
+	commands := []*Message{
+		NewArray([]*Message{
+			NewBulkBytes([]byte("SET")),
+			NewBulkBytes([]byte("hi")),
+			NewBulkBytes([]byte("1")),
 		}),
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("GET")),
-			redis.NewBulkBytes([]byte("hi")),
+		NewArray([]*Message{
+			NewBulkBytes([]byte("GET")),
+			NewBulkBytes([]byte("hi")),
 		}),
 	}
 	expected := []string{
@@ -130,7 +129,7 @@ func TestWriteWireMessagesWithPipelineWrapping(t *testing.T) {
 	testWriteWireMessagesHelper(t, true, commands, expected)
 }
 
-func testWriteWireMessagesHelper(t *testing.T, wrapPipeline bool, wm []*redis.Message, expected []string) {
+func testWriteWireMessagesHelper(t *testing.T, wrapPipeline bool, wm []*Message, expected []string) {
 	t.Helper()
 	wg := sync.WaitGroup{}
 	wg.Add(1)
@@ -146,7 +145,7 @@ func testWriteWireMessagesHelper(t *testing.T, wrapPipeline bool, wm []*redis.Me
 	go func(l int, t *testing.T) {
 		actuals := make([]string, l)
 		for i := 0; i < l; i++ {
-			m, err := redis.Decode(reader)
+			m, err := Decode(reader)
 			assert.NoError(t, err)
 			actuals[i] = m.String()
 		}

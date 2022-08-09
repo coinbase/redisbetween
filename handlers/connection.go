@@ -2,7 +2,11 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/coinbase/memcachedbetween/pool"
+	"github.com/coinbase/redisbetween/config"
+	"github.com/coinbase/redisbetween/utils"
 	"io"
 	"net"
 	"runtime/debug"
@@ -10,37 +14,41 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/messenger"
 	"github.com/coinbase/redisbetween/redis"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap"
 )
 
+type UpstreamLookup interface {
+	ConfigByName(ctx context.Context, name string) (*config.Upstream, bool)
+	LookupByName(ctx context.Context, name string) (redis.ClientInterface, bool)
+}
+
 type connection struct {
 	sync.Mutex
 
-	log          *zap.Logger
-	statsd       *statsd.Client
-	ctx          context.Context
-	readTimeout  time.Duration
-	writeTimeout time.Duration
-	conn         net.Conn
-	address      string
-	id           uint64
-	server       pool.ServerWrapper
-	kill         chan interface{}
-	quit         chan interface{}
-	interceptor  MessageInterceptor
-	messenger    messenger.Messenger
-	reservations *Reservations
-	isClosed     bool
+	log            *zap.Logger
+	statsd         *statsd.Client
+	ctx            context.Context
+	readTimeout    time.Duration
+	writeTimeout   time.Duration
+	conn           net.Conn
+	address        string
+	id             uint64
+	upstreamLookup UpstreamLookup
+	listenerConfig *config.Listener
+	kill           chan interface{}
+	quit           chan interface{}
+	interceptor    MessageInterceptor
+	messenger      redis.Messenger
+	reservations   *Reservations
+	isClosed       bool
 }
 
 type MessageInterceptor func(incomingCmds []string, m []*redis.Message)
 
-func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, readTimeout, writeTimeout time.Duration, id uint64, server *pool.Server, kill chan interface{}, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations) {
+func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, address string, id uint64, kill chan interface{}, quit chan interface{}, interceptor MessageInterceptor, reservations *Reservations, lookup UpstreamLookup, cfg *config.Listener) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -48,18 +56,19 @@ func CommandConnection(log *zap.Logger, sd *statsd.Client, conn net.Conn, addres
 	}()
 
 	c := connection{
-		log:          log,
-		statsd:       sd,
-		ctx:          context.Background(),
-		conn:         conn,
-		address:      address,
-		id:           id,
-		server:       server,
-		kill:         kill,
-		quit:         quit,
-		interceptor:  interceptor,
-		messenger:    messenger.WireMessenger{},
-		reservations: reservations,
+		log:            log,
+		statsd:         sd,
+		ctx:            context.Background(),
+		conn:           conn,
+		address:        address,
+		id:             id,
+		upstreamLookup: lookup,
+		listenerConfig: cfg,
+		kill:           kill,
+		quit:           quit,
+		interceptor:    interceptor,
+		messenger:      redis.WireMessenger{},
+		reservations:   reservations,
 	}
 	c.processMessages()
 }
@@ -123,13 +132,21 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 			return l, err
 		}
 	} else {
-		if wm, l, err = c.roundTrip(wm); err != nil {
-			return l, err
+		l = c.log.With(zap.String("upstream", c.listenerConfig.Target))
+		ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, l), utils.CtxStatsdKey, c.statsd)
+		client, ok := c.upstreamLookup.LookupByName(ctx, c.listenerConfig.Target)
+
+		if !ok {
+			return l, errors.New(fmt.Sprintf("cannot find upstream: %s", c.listenerConfig.Target))
 		}
 
-		c.interceptor(incomingCmds, wm)
+		var res []*redis.Message
+		if res, err = client.Call(ctx, wm); err != nil {
+			return l, err
+		}
+		c.interceptor(incomingCmds, res)
 
-		err = c.messenger.Write(c.ctx, l, wm, c.conn, c.address, c.id, 0, len(wm) > 1, c.conn.Close)
+		err = c.messenger.Write(c.ctx, l, res, c.conn, c.address, c.id, 0, len(res) > 1, c.conn.Close)
 	}
 
 	return l, err
@@ -175,49 +192,15 @@ func (c *connection) validateCommands(wm []*redis.Message) ([]string, error) {
 
 }
 
-func (c *connection) roundTrip(wm []*redis.Message) ([]*redis.Message, *zap.Logger, error) {
-	l := c.log
-	var err error
-
-	var conn pool.ConnectionWrapper
-	if conn, err = c.checkoutConnection(); err != nil {
-		return nil, l, err
-	}
-	defer func() {
-		l.Debug("Connection returned to pool (from roundTrip)")
-		_ = conn.Return()
-	}()
-
-	l = c.log.With(zap.Uint64("upstream_id", conn.ID()))
-	l.Debug("Connection checked out")
-
-	if err = c.messenger.Write(c.ctx, l, wm, conn.Conn(), conn.Address().String(), conn.ID(), c.writeTimeout, false, conn.Close); err != nil {
-		return nil, l, err
-	}
-
-	res, err := c.messenger.Read(c.ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), c.readTimeout, len(wm), false, conn.Close)
-
-	return res, l, err
-}
-
 func (c *connection) checkoutConnection() (conn pool.ConnectionWrapper, err error) {
-	defer func(start time.Time) {
-		addr := ""
-		if conn != nil {
-			addr = conn.Address().String()
-		}
-		_ = c.statsd.Timing("checkout_connection", time.Since(start), []string{
-			fmt.Sprintf("address:%s", addr),
-			fmt.Sprintf("success:%v", err == nil),
-		}, 1)
-	}(time.Now())
+	client, ok := c.upstreamLookup.LookupByName(context.Background(), c.listenerConfig.Target)
 
-	conn, err = c.server.Connection(c.ctx)
-	if err != nil {
-		return nil, err
+	if !ok {
+		return nil, errors.New(fmt.Sprintf("cannot find upstream: %s", c.listenerConfig.Target))
 	}
 
-	return conn, nil
+	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, c.log), utils.CtxStatsdKey, c.statsd)
+	return client.CheckoutConnection(ctx)
 }
 
 func (c *connection) Write(wm []*redis.Message) error {
