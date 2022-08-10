@@ -97,11 +97,14 @@ func run(log *zap.Logger, sd *statsd.Client, opts *config.Options) error {
 		for _, p := range proxies {
 			p.Shutdown()
 		}
+
+		_ = upstreamManager.Shutdown(context.WithValue(context.Background(), utils.CtxLogKey, log))
 	}
 	kill := func() {
 		for _, p := range proxies {
 			p.Kill()
 		}
+		_ = upstreamManager.Shutdown(context.WithValue(context.Background(), utils.CtxLogKey, log))
 	}
 	shutdownOnSignal(log, shutdown, kill)
 

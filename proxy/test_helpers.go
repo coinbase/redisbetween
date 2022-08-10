@@ -78,6 +78,7 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 
 	return func() {
 		proxy.Shutdown()
+		_ = lookup.Shutdown(context.Background())
 	}
 }
 
