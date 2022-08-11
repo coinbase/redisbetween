@@ -3,18 +3,19 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"github.com/coinbase/redisbetween/config"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/DataDog/datadog-go/statsd"
-	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/redis"
-	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/DataDog/datadog-go/statsd"
+	"github.com/coinbase/memcachedbetween/pool"
+	"github.com/coinbase/redisbetween/config"
+	"github.com/coinbase/redisbetween/redis"
+	"github.com/stretchr/testify/assert"
 )
 
 /* ConnectionWrapper mock */
@@ -151,11 +152,11 @@ type upstreamLookupMock struct {
 	client redis.ClientInterface
 }
 
-func (u *upstreamLookupMock) ConfigByName(ctx context.Context, name string) (*config.Upstream, bool) {
+func (u *upstreamLookupMock) ConfigByName(name string) (*config.Upstream, bool) {
 	return u.cfg, true
 }
 
-func (u *upstreamLookupMock) LookupByName(ctx context.Context, name string) (redis.ClientInterface, bool) {
+func (u *upstreamLookupMock) LookupByName(name string) (redis.ClientInterface, bool) {
 	return u.client, true
 }
 

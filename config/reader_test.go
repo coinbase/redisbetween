@@ -2,9 +2,10 @@ package config
 
 import (
 	"context"
+	"testing"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func TestBuildFromOptionsShouldReturnStaticConfigFromOpts(t *testing.T) {

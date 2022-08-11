@@ -3,19 +3,19 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"github.com/coinbase/redisbetween/utils"
-	"github.com/google/uuid"
 	"net"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 func RedisHost() string {
@@ -38,10 +38,8 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 	sd, err := statsd.New("localhost:8125")
 	assert.NoError(t, err)
 
-	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
-
 	target := uuid.New().String()
-	l := &config.Listener{
+	l := config.Listener{
 		Name:              target,
 		Network:           "unix",
 		LocalSocketPrefix: fmt.Sprintf("/var/tmp/redisbetween-%d-", id),
@@ -51,7 +49,7 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 		MaxBlockers:       1,
 		Unlink:            true,
 	}
-	u := &config.Upstream{
+	u := config.Upstream{
 		Name:         target,
 		Address:      uri,
 		Database:     db,
@@ -62,11 +60,11 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 		WriteTimeout: 1 * time.Second,
 	}
 
-	lookup := NewUpstreamManager()
-	err = lookup.Add(ctx, u)
+	lookup := NewUpstreamManager(zap.NewNop(), sd)
+	err = lookup.Add(u)
 	assert.NoError(t, err)
 
-	proxy, err := NewProxy(ctx, l, lookup)
+	proxy, err := NewProxy(l, lookup, zap.NewNop(), sd)
 	assert.NoError(t, err)
 
 	go func() {

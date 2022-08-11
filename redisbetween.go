@@ -3,18 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/DataDog/datadog-go/statsd"
-	"github.com/coinbase/redisbetween/utils"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/coinbase/redisbetween/config"
-	"github.com/coinbase/redisbetween/proxy"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/DataDog/datadog-go/statsd"
+	"github.com/coinbase/redisbetween/config"
+	"github.com/coinbase/redisbetween/proxy"
 )
 
 func main() {
@@ -63,15 +63,14 @@ func run(log *zap.Logger, sd *statsd.Client, opts *config.Options) error {
 		return err
 	}
 
-	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, sd)
-	upstreamManager := proxy.NewUpstreamManager()
+	upstreamManager := proxy.NewUpstreamManager(log, sd)
 	for _, u := range cfg.Upstreams {
-		if err := upstreamManager.Add(ctx, u); err != nil {
+		if err := upstreamManager.Add(*u); err != nil {
 			log.Error("failed to initialize upstream", zap.String("upstream", u.Name))
 		}
 	}
 
-	proxies, err := proxies(ctx, &cfg, upstreamManager)
+	proxies, err := proxies(&cfg, upstreamManager, log, sd)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -98,13 +97,13 @@ func run(log *zap.Logger, sd *statsd.Client, opts *config.Options) error {
 			p.Shutdown()
 		}
 
-		_ = upstreamManager.Shutdown(context.WithValue(context.Background(), utils.CtxLogKey, log))
+		_ = upstreamManager.Shutdown(context.Background())
 	}
 	kill := func() {
 		for _, p := range proxies {
 			p.Kill()
 		}
-		_ = upstreamManager.Shutdown(context.WithValue(context.Background(), utils.CtxLogKey, log))
+		_ = upstreamManager.Shutdown(context.Background())
 	}
 	shutdownOnSignal(log, shutdown, kill)
 
@@ -113,9 +112,9 @@ func run(log *zap.Logger, sd *statsd.Client, opts *config.Options) error {
 	return nil
 }
 
-func proxies(ctx context.Context, c *config.Config, manager proxy.UpstreamManager) (proxies []*proxy.Proxy, err error) {
+func proxies(c *config.Config, manager proxy.UpstreamManager, log *zap.Logger, sd *statsd.Client) (proxies []*proxy.Proxy, err error) {
 	for _, l := range c.Listeners {
-		p, err := proxy.NewProxy(ctx, l, manager)
+		p, err := proxy.NewProxy(*l, manager, log, sd)
 
 		if err != nil {
 			return nil, err

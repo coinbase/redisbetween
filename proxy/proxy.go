@@ -3,10 +3,8 @@ package proxy
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
-	"github.com/coinbase/redisbetween/utils"
 	"net"
 	"runtime/debug"
 	"strconv"
@@ -14,15 +12,15 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/memcachedbetween/listener"
 	"github.com/coinbase/mongobetween/util"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/handlers"
 	"github.com/coinbase/redisbetween/redis"
 	"github.com/mediocregopher/radix/v3"
-
-	"github.com/DataDog/datadog-go/statsd"
-	"go.uber.org/zap"
 )
 
 const restartSleep = 1 * time.Second
@@ -45,13 +43,7 @@ type Proxy struct {
 	reservations *handlers.Reservations
 }
 
-func NewProxy(ctx context.Context, listenerConfig *config.Listener, lookup UpstreamManager) (*Proxy, error) {
-	cfg := &config.Listener{}
-	*cfg = *listenerConfig
-
-	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
-	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
-
+func NewProxy(cfg config.Listener, lookup UpstreamManager, log *zap.Logger, sd *statsd.Client) (*Proxy, error) {
 	if cfg.Name != "" {
 		log = log.With(zap.String("cluster", cfg.Name))
 
@@ -65,7 +57,7 @@ func NewProxy(ctx context.Context, listenerConfig *config.Listener, lookup Upstr
 	return &Proxy{
 		log:    log,
 		statsd: sd,
-		config: cfg,
+		config: &cfg,
 		lookup: lookup,
 
 		quit: make(chan interface{}),
@@ -125,15 +117,14 @@ func (p *Proxy) run() error {
 		}
 	}()
 
-	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, p.log), utils.CtxStatsdKey, p.statsd)
-	upstreamConfig, ok := p.lookup.ConfigByName(ctx, p.config.Target)
+	upstreamConfig, ok := p.lookup.ConfigByName(p.config.Target)
 
 	if !ok {
 		return errors.New(fmt.Sprintf("Missing upstream config: %v", p.config.Target))
 	}
 
 	localSocket := localSocketPathFromUpstream(upstreamConfig.Address, upstreamConfig.Database, upstreamConfig.Readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
-	l, err := NewListener(ctx, localSocket, p.config, p.lookup, p.interceptMessages, p.reservations, p.quit)
+	l, err := NewListener(p.log, p.statsd, localSocket, p.config, p.lookup, p.interceptMessages, p.reservations, p.quit)
 	if err != nil {
 		return err
 	}
@@ -230,20 +221,18 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
 
-	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, log), utils.CtxStatsdKey, p.statsd)
-	cfg, ok := p.lookup.ConfigByName(ctx, p.config.Target)
+	cfg, ok := p.lookup.ConfigByName(p.config.Target)
 
 	if !ok {
 		log.Error("failed to find upstream", zap.String("target", p.config.Target))
 		return
 	}
 
-	upstreamConfig := &config.Upstream{}
-	*upstreamConfig = *cfg
+	upstreamConfig := *cfg
 	upstreamConfig.Name = upstream
 	upstreamConfig.Address = upstream
 
-	err := p.lookup.Add(ctx, upstreamConfig)
+	err := p.lookup.Add(upstreamConfig)
 
 	if err != nil {
 		log.Error("failed to register upstream", zap.Error(err))
@@ -254,25 +243,21 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 	if !ok {
 		log.Info("did not find listener, creating new one", zap.String("local", localSocket))
 
-		listenerConfig := &config.Listener{}
-		*listenerConfig = *p.config
+		listenerConfig := *p.config
 		listenerConfig.Name = upstreamConfig.Name
 		listenerConfig.Target = upstreamConfig.Name
 
-		l, err := NewListener(ctx, localSocket, listenerConfig, p.lookup, p.interceptMessages, p.reservations, p.quit)
+		l, err := NewListener(p.log, p.statsd, localSocket, &listenerConfig, p.lookup, p.interceptMessages, p.reservations, p.quit)
 		if err != nil {
 			p.log.Error("unable to create listener", zap.Error(err))
 		}
 		p.listeners[localSocket] = l
-		p.listenerConfig[localSocket] = listenerConfig
+		p.listenerConfig[localSocket] = &listenerConfig
 		p.runListener(l)
 	}
 }
 
-func NewListener(ctx context.Context, localSocket string, cfg *config.Listener, lookup handlers.UpstreamLookup, interceptor handlers.MessageInterceptor, r *handlers.Reservations, quit chan interface{}) (*listener.Listener, error) {
-	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
-	sd := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
-
+func NewListener(log *zap.Logger, sd *statsd.Client, localSocket string, cfg *config.Listener, lookup handlers.UpstreamLookup, interceptor handlers.MessageInterceptor, r *handlers.Reservations, quit chan interface{}) (*listener.Listener, error) {
 	logWith := log.With(zap.String("upstream", cfg.Target), zap.String("local", localSocket))
 	sdWith, err := util.StatsdWithTags(sd, []string{fmt.Sprintf("upstream:%s", cfg.Target), fmt.Sprintf("local:%s", localSocket)})
 

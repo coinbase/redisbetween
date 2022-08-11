@@ -6,8 +6,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/coinbase/memcachedbetween/pool"
 	"go.uber.org/zap"
+
+	"github.com/coinbase/memcachedbetween/pool"
 )
 
 type Messenger interface {

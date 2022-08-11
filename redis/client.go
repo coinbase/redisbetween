@@ -3,17 +3,18 @@ package redis
 import (
 	"context"
 	"fmt"
-	"github.com/DataDog/datadog-go/statsd"
-	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/mongobetween/util"
-	"github.com/coinbase/redisbetween/utils"
-	"go.uber.org/zap"
 	"io"
 	"net"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
+
+	"github.com/DataDog/datadog-go/statsd"
+	"github.com/coinbase/memcachedbetween/pool"
+	"github.com/coinbase/mongobetween/util"
 )
 
 type Options struct {
@@ -30,6 +31,9 @@ type Client struct {
 	server    pool.ServerWrapper
 	messenger Messenger
 	config    Options
+
+	sd  *statsd.Client
+	log *zap.Logger
 }
 
 type ClientInterface interface {
@@ -41,9 +45,9 @@ type ClientInterface interface {
 
 // NewClient opens a connection pool to the redis server
 // and returns a handle.
-func NewClient(ctx context.Context, c *Options) (ClientInterface, error) {
+func NewClient(c *Options, log *zap.Logger, sd *statsd.Client) (ClientInterface, error) {
 	config := *c
-	server, err := connectToServer(ctx, &config)
+	server, err := connectToServer(&config, log, sd)
 
 	if err != nil {
 		return nil, err
@@ -53,6 +57,8 @@ func NewClient(ctx context.Context, c *Options) (ClientInterface, error) {
 		server:    server,
 		messenger: WireMessenger{},
 		config:    config,
+		sd:        sd,
+		log:       log,
 	}, nil
 }
 
@@ -64,37 +70,35 @@ func (r *Client) Address() string {
 // returns the response message sent by the server. The method
 // will fail if the command is blocking
 func (r *Client) Call(ctx context.Context, msg []*Message) ([]*Message, error) {
-	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
+	log := r.log
 
 	var err error
 	var conn pool.ConnectionWrapper
 	if conn, err = r.CheckoutConnection(ctx); err != nil {
 		return nil, err
 	}
-
-	if s, ok := ctx.Value(utils.CtxStatsdKey).(statsd.ClientInterface); ok {
-		id, address := conn.ID(), conn.Address().String()
-		defer func(start time.Time) {
-			_ = s.Timing("upstream_round_trip", time.Since(start), []string{
-				fmt.Sprintf("upstream_id:%d", id),
-				fmt.Sprintf("address:%s", address),
-				fmt.Sprintf("success:%v", err == nil),
-			}, 1)
-		}(time.Now())
-	}
-
-	l := log.With(zap.Uint64("upstream_id", conn.ID()))
 	defer func() {
-		l.Debug("Connection returned to pool")
+		log.Debug("Connection returned to pool", zap.Uint64("upstream_id", conn.ID()))
 		_ = conn.Return()
 	}()
-	l.Debug("Connection checked out")
 
-	if err = r.messenger.Write(ctx, l, msg, conn.Conn(), conn.Address().String(), conn.ID(), r.config.WriteTimeout, false, conn.Close); err != nil {
+	defer func(start time.Time) {
+		id, address := conn.ID(), conn.Address().String()
+		_ = r.sd.Timing("upstream_round_trip", time.Since(start), []string{
+			fmt.Sprintf("upstream_id:%d", id),
+			fmt.Sprintf("address:%s", address),
+			fmt.Sprintf("success:%v", err == nil),
+		}, 1)
+	}(time.Now())
+
+	log = log.With(zap.Uint64("upstream_id", conn.ID()))
+	log.Debug("Connection checked out")
+
+	if err = r.messenger.Write(ctx, log, msg, conn.Conn(), conn.Address().String(), conn.ID(), r.config.WriteTimeout, false, conn.Close); err != nil {
 		return nil, err
 	}
 
-	res, err := r.messenger.Read(ctx, l, conn.Conn(), conn.Address().String(), conn.ID(), r.config.ReadTimeout, len(msg), false, conn.Close)
+	res, err := r.messenger.Read(ctx, log, conn.Conn(), conn.Address().String(), conn.ID(), r.config.ReadTimeout, len(msg), false, conn.Close)
 
 	return res, err
 }
@@ -104,10 +108,8 @@ func (r *Client) Close(ctx context.Context) error {
 	return r.server.Disconnect(ctx)
 }
 
-func connectToServer(ctx context.Context, c *Options) (*pool.Server, error) {
-	log := ctx.Value(utils.CtxLogKey).(*zap.Logger).With(zap.String("upstream", c.Addr))
-	s := ctx.Value(utils.CtxStatsdKey).(*statsd.Client)
-	sd, err := util.StatsdWithTags(s, []string{fmt.Sprintf("upstream:%s", c.Addr)})
+func connectToServer(c *Options, log *zap.Logger, sd *statsd.Client) (*pool.Server, error) {
+	sd, err := util.StatsdWithTags(sd, []string{fmt.Sprintf("upstream:%s", c.Addr)})
 
 	if err != nil {
 		return nil, err
@@ -145,18 +147,16 @@ func connectToServer(ctx context.Context, c *Options) (*pool.Server, error) {
 
 // CheckoutConnection returns a connection from the pool. The method is temporarily made public
 func (r *Client) CheckoutConnection(ctx context.Context) (conn pool.ConnectionWrapper, err error) {
-	if s, ok := ctx.Value(utils.CtxStatsdKey).(*statsd.Client); ok {
-		defer func(start time.Time) {
-			addr := ""
-			if conn != nil {
-				addr = conn.Address().String()
-			}
-			_ = s.Timing("checkout_connection", time.Since(start), []string{
-				fmt.Sprintf("address:%s", addr),
-				fmt.Sprintf("success:%v", err == nil),
-			}, 1)
-		}(time.Now())
-	}
+	defer func(start time.Time) {
+		addr := ""
+		if conn != nil {
+			addr = conn.Address().String()
+		}
+		_ = r.sd.Timing("checkout_connection", time.Since(start), []string{
+			fmt.Sprintf("address:%s", addr),
+			fmt.Sprintf("success:%v", err == nil),
+		}, 1)
+	}(time.Now())
 
 	conn, err = r.server.Connection(ctx)
 	if err != nil {

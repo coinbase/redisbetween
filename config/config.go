@@ -1,8 +1,9 @@
 package config
 
 import (
-	"go.uber.org/zap/zapcore"
 	"time"
+
+	"go.uber.org/zap/zapcore"
 )
 
 type Config struct {

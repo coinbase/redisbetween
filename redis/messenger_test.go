@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap/zaptest"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestReadWireMessagesPipeline(t *testing.T) {

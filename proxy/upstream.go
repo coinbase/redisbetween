@@ -4,25 +4,29 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+
+	"go.uber.org/zap"
+
+	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/redis"
-	"github.com/coinbase/redisbetween/utils"
-	"go.uber.org/zap"
-	"sync"
 )
 
 type UpstreamManager interface {
-	Add(ctx context.Context, c *config.Upstream) error
-	ConfigByName(ctx context.Context, name string) (*config.Upstream, bool)
-	LookupByName(ctx context.Context, name string) (redis.ClientInterface, bool)
+	Add(c config.Upstream) error
+	ConfigByName(name string) (*config.Upstream, bool)
+	LookupByName(name string) (redis.ClientInterface, bool)
 	Shutdown(ctx context.Context) error
 }
 
-func NewUpstreamManager() UpstreamManager {
+func NewUpstreamManager(log *zap.Logger, sd *statsd.Client) UpstreamManager {
 	return &upstreamManager{
 		configsByName:   make(map[string]*config.Upstream),
 		uniqueUpstreams: make(map[string]redis.ClientInterface),
 		upstreamsByName: make(map[string]redis.ClientInterface),
+		log:             log,
+		sd:              sd,
 	}
 }
 
@@ -30,34 +34,32 @@ type upstreamManager struct {
 	configsByName   map[string]*config.Upstream
 	uniqueUpstreams map[string]redis.ClientInterface
 	upstreamsByName map[string]redis.ClientInterface
+
+	log *zap.Logger
+	sd  *statsd.Client
 	sync.RWMutex
 }
 
-func (m *upstreamManager) Add(ctx context.Context, u *config.Upstream) error {
+func (m *upstreamManager) Add(cfg config.Upstream) error {
 	m.Lock()
 	defer m.Unlock()
 
-	// Make a local copy of the config
-	cfg := &config.Upstream{}
-	*cfg = *u
+	l := m.log.With(zap.String("label", cfg.Name), zap.String("address", cfg.Address))
 
-	log := ctx.Value(utils.CtxLogKey).(*zap.Logger)
-	l := log.With(zap.String("label", cfg.Name), zap.String("address", cfg.Address))
-
-	if ob, ok := m.upstreamsByName[u.Name]; ok {
+	if ob, ok := m.upstreamsByName[cfg.Name]; ok {
 		l.Debug("Upstream already initialized")
-		m.uniqueUpstreams[u.Address] = ob
+		m.uniqueUpstreams[cfg.Address] = ob
 		return errors.New("ALREADY_PRESENT")
 	}
 
-	key := generateUniqueIdentifier(u)
+	key := generateUniqueIdentifier(&cfg)
 	if ob, ok := m.uniqueUpstreams[key]; ok {
 		l.Debug("Upstream already initialized")
-		m.upstreamsByName[u.Name] = ob
+		m.upstreamsByName[cfg.Name] = ob
 		return errors.New("ALREADY_PRESENT")
 	}
 
-	client, err := redis.NewClient(ctx, &redis.Options{
+	client, err := redis.NewClient(&redis.Options{
 		Addr:         cfg.Address,
 		Database:     cfg.Database,
 		MinPoolSize:  cfg.MinPoolSize,
@@ -65,15 +67,15 @@ func (m *upstreamManager) Add(ctx context.Context, u *config.Upstream) error {
 		Readonly:     cfg.Readonly,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
-	})
+	}, m.log, m.sd)
 
 	if err != nil {
 		return err
 	}
 
-	m.configsByName[u.Name] = cfg
+	m.configsByName[cfg.Name] = &cfg
 	m.uniqueUpstreams[key] = client
-	m.upstreamsByName[u.Name] = client
+	m.upstreamsByName[cfg.Name] = client
 
 	return nil
 }
@@ -82,7 +84,8 @@ func generateUniqueIdentifier(u *config.Upstream) string {
 	return fmt.Sprintf("%s:%v:%v", u.Address, u.Database, u.Readonly)
 }
 
-func (m *upstreamManager) ConfigByName(_ context.Context, name string) (*config.Upstream, bool) {
+func (m *upstreamManager) ConfigByName(
+	name string) (*config.Upstream, bool) {
 	m.RLock()
 	defer m.RUnlock()
 	if c, ok := m.configsByName[name]; ok {
@@ -92,7 +95,7 @@ func (m *upstreamManager) ConfigByName(_ context.Context, name string) (*config.
 	return nil, false
 }
 
-func (m *upstreamManager) LookupByName(_ context.Context, name string) (redis.ClientInterface, bool) {
+func (m *upstreamManager) LookupByName(name string) (redis.ClientInterface, bool) {
 	m.RLock()
 	defer m.RUnlock()
 	if client, ok := m.upstreamsByName[name]; ok {

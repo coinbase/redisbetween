@@ -4,9 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/config"
-	"github.com/coinbase/redisbetween/utils"
 	"io"
 	"net"
 	"runtime/debug"
@@ -14,15 +11,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/coinbase/redisbetween/redis"
+	"go.uber.org/zap"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"go.uber.org/zap"
+	"github.com/coinbase/memcachedbetween/pool"
+	"github.com/coinbase/redisbetween/config"
+	"github.com/coinbase/redisbetween/redis"
 )
 
 type UpstreamLookup interface {
-	ConfigByName(ctx context.Context, name string) (*config.Upstream, bool)
-	LookupByName(ctx context.Context, name string) (redis.ClientInterface, bool)
+	ConfigByName(name string) (*config.Upstream, bool)
+	LookupByName(name string) (redis.ClientInterface, bool)
 }
 
 type connection struct {
@@ -133,15 +132,14 @@ func (c *connection) handleMessage() (*zap.Logger, error) {
 		}
 	} else {
 		l = c.log.With(zap.String("upstream", c.listenerConfig.Target))
-		ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, l), utils.CtxStatsdKey, c.statsd)
-		client, ok := c.upstreamLookup.LookupByName(ctx, c.listenerConfig.Target)
+		client, ok := c.upstreamLookup.LookupByName(c.listenerConfig.Target)
 
 		if !ok {
 			return l, errors.New(fmt.Sprintf("cannot find upstream: %s", c.listenerConfig.Target))
 		}
 
 		var res []*redis.Message
-		if res, err = client.Call(ctx, wm); err != nil {
+		if res, err = client.Call(context.Background(), wm); err != nil {
 			return l, err
 		}
 		c.interceptor(incomingCmds, res)
@@ -193,14 +191,13 @@ func (c *connection) validateCommands(wm []*redis.Message) ([]string, error) {
 }
 
 func (c *connection) checkoutConnection() (conn pool.ConnectionWrapper, err error) {
-	client, ok := c.upstreamLookup.LookupByName(context.Background(), c.listenerConfig.Target)
+	client, ok := c.upstreamLookup.LookupByName(c.listenerConfig.Target)
 
 	if !ok {
 		return nil, errors.New(fmt.Sprintf("cannot find upstream: %s", c.listenerConfig.Target))
 	}
 
-	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, c.log), utils.CtxStatsdKey, c.statsd)
-	return client.CheckoutConnection(ctx)
+	return client.CheckoutConnection(context.Background())
 }
 
 func (c *connection) Write(wm []*redis.Message) error {

@@ -2,19 +2,20 @@ package redis
 
 import (
 	"context"
+	"testing"
+
+	"go.uber.org/zap"
+
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/utils"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
-	"testing"
 )
 
 func TestRedisCallToPerformRoundTripOperation(t *testing.T) {
 	sd, _ := statsd.New("localhost:8125")
-	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
-	client, _ := NewClient(ctx, &Options{
+	client, _ := NewClient(&Options{
 		Addr: utils.RedisHost() + ":7006",
-	})
+	}, zap.NewNop(), sd)
 
 	commands := []*Message{
 		NewArray([]*Message{
@@ -24,7 +25,7 @@ func TestRedisCallToPerformRoundTripOperation(t *testing.T) {
 		}),
 	}
 
-	result, err := client.Call(ctx, commands)
+	result, err := client.Call(context.Background(), commands)
 	assert.Nil(t, err, err)
 	assert.Equal(t, len(result), 1)
 	assert.Equal(t, []byte("OK"), result[0].Value)
@@ -32,10 +33,10 @@ func TestRedisCallToPerformRoundTripOperation(t *testing.T) {
 
 func TestRedisCallToPerformRoundTripOperationWithMultipleCommands(t *testing.T) {
 	sd, _ := statsd.New("localhost:8125")
-	ctx := context.WithValue(context.WithValue(context.Background(), utils.CtxLogKey, zap.L()), utils.CtxStatsdKey, sd)
-	client, _ := NewClient(ctx, &Options{
+
+	client, _ := NewClient(&Options{
 		Addr: utils.RedisHost() + ":7006",
-	})
+	}, zap.NewNop(), sd)
 
 	commands := []*Message{
 		NewArray([]*Message{
@@ -49,7 +50,7 @@ func TestRedisCallToPerformRoundTripOperationWithMultipleCommands(t *testing.T) 
 		}),
 	}
 
-	result, err := client.Call(ctx, commands)
+	result, err := client.Call(context.Background(), commands)
 	assert.Nil(t, err, err)
 	assert.Equal(t, len(result), 2)
 	assert.Equal(t, []byte("OK"), result[0].Value)

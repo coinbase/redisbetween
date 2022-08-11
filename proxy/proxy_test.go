@@ -2,11 +2,11 @@ package proxy
 
 import (
 	"context"
-	redis2 "github.com/coinbase/redisbetween/redis"
 	"strconv"
 	"sync"
 	"testing"
 
+	redis2 "github.com/coinbase/redisbetween/redis"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )
