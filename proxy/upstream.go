@@ -84,8 +84,7 @@ func generateUniqueIdentifier(u *config.Upstream) string {
 	return fmt.Sprintf("%s:%v:%v", u.Address, u.Database, u.Readonly)
 }
 
-func (m *upstreamManager) ConfigByName(
-	name string) (*config.Upstream, bool) {
+func (m *upstreamManager) ConfigByName(name string) (*config.Upstream, bool) {
 	m.RLock()
 	defer m.RUnlock()
 	if c, ok := m.configsByName[name]; ok {
