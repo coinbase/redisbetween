@@ -7,6 +7,7 @@ require (
 	github.com/coinbase/memcachedbetween v0.0.0-20211102164832-e9f6e7c6d80e
 	github.com/coinbase/mongobetween v0.0.9
 	github.com/go-redis/redis/v8 v8.4.2
+	github.com/google/uuid v1.1.2
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mediocregopher/radix/v3 v3.6.0
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect

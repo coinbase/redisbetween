@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -8,20 +9,31 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/proxy"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 func main() {
-	c := config.ParseFlags()
-	log := newLogger(c.Level, c.Pretty)
-	err := run(log, c)
+	opts := config.ParseFlags()
+	log := newLogger(opts.Level, opts.Pretty)
+	sd := newStatsd(opts.Statsd, log)
+
+	err := run(log, sd, opts)
 	if err != nil {
 		log.Panic("error", zap.Error(err))
 	}
+}
+
+func newStatsd(addr string, log *zap.Logger) *statsd.Client {
+	s, err := statsd.New(addr, statsd.WithNamespace("redisbetween"))
+	if err != nil {
+		log.Panic("Failed to initialize statsd", zap.Error(err))
+	}
+	return s
 }
 
 func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
@@ -45,8 +57,20 @@ func newLogger(level zapcore.Level, pretty bool) *zap.Logger {
 	return log
 }
 
-func run(log *zap.Logger, cfg *config.Config) error {
-	proxies, err := proxies(cfg, log)
+func run(log *zap.Logger, sd *statsd.Client, opts *config.Options) error {
+	cfg, err := config.BuildFromOptions(context.Background(), opts)
+	if err != nil {
+		return err
+	}
+
+	upstreamManager := proxy.NewUpstreamManager(log, sd)
+	for _, u := range cfg.Upstreams {
+		if err := upstreamManager.Add(*u); err != nil {
+			log.Error("failed to initialize upstream", zap.String("upstream", u.Name))
+		}
+	}
+
+	proxies, err := proxies(&cfg, upstreamManager, log, sd)
 	if err != nil {
 		log.Fatal("Startup error", zap.Error(err))
 	}
@@ -72,11 +96,14 @@ func run(log *zap.Logger, cfg *config.Config) error {
 		for _, p := range proxies {
 			p.Shutdown()
 		}
+
+		_ = upstreamManager.Shutdown(context.Background())
 	}
 	kill := func() {
 		for _, p := range proxies {
 			p.Kill()
 		}
+		_ = upstreamManager.Shutdown(context.Background())
 	}
 	shutdownOnSignal(log, shutdown, kill)
 
@@ -85,17 +112,9 @@ func run(log *zap.Logger, cfg *config.Config) error {
 	return nil
 }
 
-func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err error) {
-	s, err := statsd.New(c.Statsd, statsd.WithNamespace("redisbetween"))
-	if err != nil {
-		return nil, err
-	}
-	for _, u := range c.Upstreams {
-		p, err := proxy.NewProxy(
-			log, s, c, u.Label, u.UpstreamConfigHost, u.Database,
-			u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout,
-			u.Readonly, u.MaxSubscriptions, u.MaxBlockers,
-		)
+func proxies(c *config.Config, manager proxy.UpstreamManager, log *zap.Logger, sd *statsd.Client) (proxies []*proxy.Proxy, err error) {
+	for _, l := range c.Listeners {
+		p, err := proxy.NewProxy(*l, manager, log, sd)
 
 		if err != nil {
 			return nil, err

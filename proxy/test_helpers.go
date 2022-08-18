@@ -9,11 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
 )
 
 func RedisHost() string {
@@ -36,15 +38,35 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 	sd, err := statsd.New("localhost:8125")
 	assert.NoError(t, err)
 
-	cfg := &config.Config{
+	target := uuid.New().String()
+	l := config.Listener{
+		Name:              target,
 		Network:           "unix",
 		LocalSocketPrefix: fmt.Sprintf("/var/tmp/redisbetween-%d-", id),
 		LocalSocketSuffix: ".sock",
+		Target:            target,
+		MaxSubscriptions:  1,
+		MaxBlockers:       1,
 		Unlink:            true,
 	}
+	u := config.Upstream{
+		Name:         target,
+		Address:      uri,
+		Database:     db,
+		MinPoolSize:  1,
+		MaxPoolSize:  maxPoolSize,
+		Readonly:     readonly,
+		ReadTimeout:  1 * time.Second,
+		WriteTimeout: 1 * time.Second,
+	}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1)
+	lookup := NewUpstreamManager(zap.NewNop(), sd)
+	err = lookup.Add(u)
 	assert.NoError(t, err)
+
+	proxy, err := NewProxy(l, lookup, zap.NewNop(), sd)
+	assert.NoError(t, err)
+
 	go func() {
 		err := proxy.Run()
 		assert.NoError(t, err)
@@ -54,6 +76,7 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 
 	return func() {
 		proxy.Shutdown()
+		_ = lookup.Shutdown(context.Background())
 	}
 }
 
