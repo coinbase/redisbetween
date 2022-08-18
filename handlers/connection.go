@@ -77,7 +77,9 @@ func (c *connection) processMessages() {
 		l, err := c.handleMessage()
 		if err != nil {
 			if err == io.EOF {
-				c.isClosed = true
+				if err := c.Close(); err != nil {
+					l.Error("Errored closing connection on EOF", zap.Error(err))
+				}
 			} else {
 				select {
 				case <-c.kill:
@@ -214,15 +216,15 @@ func (c *connection) Close() error {
 		return nil
 	}
 
+	c.Lock()
+	defer c.Unlock()
+	c.isClosed = true
+
 	err := c.conn.Close()
 	if err != nil {
 		c.log.Error("Error closing connection", zap.Error(err))
 		return err
 	}
-
-	c.Lock()
-	defer c.Unlock()
-	c.isClosed = true
 	return nil
 }
 

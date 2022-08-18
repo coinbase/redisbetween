@@ -268,6 +268,8 @@ func NewListener(log *zap.Logger, sd *statsd.Client, localSocket string, cfg *co
 	connectionHandler := func(log *zap.Logger, conn net.Conn, id uint64, kill chan interface{}) {
 		handlers.CommandConnection(log, sdWith, conn, localSocket, id, kill, quit, interceptor, r, lookup, cfg)
 	}
+
+	// Connections to upstream are handled by upstreamManager hence no cleanup needed here.
 	shutdownHandler := func() {}
 
 	return listener.New(logWith, sdWith, cfg.Network, localSocket, cfg.Unlink, connectionHandler, shutdownHandler)
