@@ -20,16 +20,18 @@ const defaultStatsdAddress = "localhost:8125"
 var validNetworks = []string{"tcp", "tcp4", "tcp6", "unix", "unixpacket"}
 
 type Config struct {
-	Network           string
-	LocalSocketPrefix string
-	LocalSocketSuffix string
-	Unlink            bool
-	MinPoolSize       uint64
-	MaxPoolSize       uint64
-	Pretty            bool
-	Statsd            string
-	Level             zapcore.Level
-	Upstreams         []Upstream
+	Network                    string
+	LocalSocketPrefix          string
+	LocalSocketSuffix          string
+	Unlink                     bool
+	MinPoolSize                uint64
+	MaxPoolSize                uint64
+	Pretty                     bool
+	Statsd                     string
+	Level                      zapcore.Level
+	Upstreams                  []Upstream
+	ServerHealthCheckSec       uint64
+	ServerHealthCheckThreshold uint64
 }
 
 type Upstream struct {
@@ -72,6 +74,7 @@ func parseFlags() (*Config, error) {
 
 	var network, localSocketPrefix, localSocketSuffix, stats, loglevel string
 	var pretty, unlink bool
+	var healthCheckThreshold, healthCheckCycle uint64
 	flag.StringVar(&network, "network", "unix", "One of: tcp, tcp4, tcp6, unix or unixpacket")
 	flag.StringVar(&localSocketPrefix, "localsocketprefix", "/var/tmp/redisbetween-", "Prefix to use for unix socket filenames")
 	flag.StringVar(&localSocketSuffix, "localsocketsuffix", ".sock", "Suffix to use for unix socket filenames")
@@ -79,6 +82,8 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
+	flag.Uint64Var(&healthCheckCycle, "healthcheckcycle", 60, "Integer value for the cycle during which server connections will be health-checked (sec); Must be bigger than healthcheckthreshold * 1sec; default: 60s")
+	flag.Uint64Var(&healthCheckThreshold, "healthcheckthreshold", 3, "The number of concecutive failures needed to declare a server connection dead; default: 3")
 
 	// todo remove these flags in a follow up, after all envs have updated to the new url-param style of timeout config
 	var obsoleteArg string
@@ -167,14 +172,16 @@ func parseFlags() (*Config, error) {
 	}
 
 	return &Config{
-		Upstreams:         upstreams,
-		Network:           network,
-		LocalSocketPrefix: localSocketPrefix,
-		LocalSocketSuffix: localSocketSuffix,
-		Unlink:            unlink,
-		Pretty:            pretty,
-		Statsd:            stats,
-		Level:             level,
+		Upstreams:                  upstreams,
+		Network:                    network,
+		LocalSocketPrefix:          localSocketPrefix,
+		LocalSocketSuffix:          localSocketSuffix,
+		Unlink:                     unlink,
+		Pretty:                     pretty,
+		Statsd:                     stats,
+		Level:                      level,
+		ServerHealthCheckThreshold: healthCheckThreshold,
+		ServerHealthCheckSec:       healthCheckCycle,
 	}, nil
 }
 
