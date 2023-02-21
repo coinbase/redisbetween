@@ -444,10 +444,6 @@ func (p *Proxy) pingServer(s *pool.Server, m messenger.Messenger) bool {
 	return true
 }
 
-func (p *Proxy) isUpstreamHost(hostPort string) {
-
-}
-
 func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
 	co := pool.WithDialer(func(dialer pool.Dialer) pool.Dialer {
 		return pool.DialerFunc(func(ctx context.Context, network, address string) (net.Conn, error) {
