@@ -168,7 +168,9 @@ func (p *Proxy) run() error {
 	}
 	p.listenerLock.Unlock()
 
-	go p.checkConnections()
+	if p.config.HealthCheck {
+		go p.checkConnections()
+	}
 	return nil
 }
 
