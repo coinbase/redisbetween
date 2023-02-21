@@ -108,7 +108,7 @@ Usage: bin/redisbetween [OPTIONS] uri1 [uri2] ...
   -healthcheckcycle
       number of seconds after which the healthcheck process should repeat itself (default 60s)
   -healthcheckthreshold
-      count of consecutive healtcheck failures after which a server is declared non-healthy 
+      count of consecutive healtcheck failures after which a server is declared non-healthy
 ```
 
 Each URI can specify the following settings as GET params:
