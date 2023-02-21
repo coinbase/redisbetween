@@ -344,9 +344,8 @@ func (p *Proxy) checkConnections() {
 // - send a ping command
 // - if error, repeat for x times
 // - if kept on erroring:
-//   + replace listener if the upstreamConfigHost
-//   + remove listener if otherwise
-// Repeat after Y seconds
+//   - replace listener if the upstreamConfigHost
+//   - remove listener if otherwise
 //
 // If the server repeatedly fails remove them unless they are the main upstream host
 // In that case, just try to recreate the connections
@@ -368,15 +367,16 @@ func (p *Proxy) checkSingleConnection(key string, c chan string) {
 			}
 		}
 		if failing {
-			p.log.Debug("Server failed to respond; Deleting and recreating listener", zap.String("server", key))
+			p.log.Warn("Server failed to respond; Deleting the listener", zap.String("server", key))
 			p.deleteListener(key)
+			// Shutdown the old, failing listener
+			ls.Listener.Shutdown()
 			if key == p.upstreamConfigHost {
 				// add the upstream config host back; we always need to have that minimally
 				// but hopefully this time, the connection is re-established to the right IP
+				p.log.Info("Server failed to respond; Recreating the listener for upstreamConfigHost", zap.String("server", key))
 				p.ensureListenerForUpstream(key, "")
 			}
-      // Shutdown the old, failing listener
-			ls.Listener.Shutdown()
 		}
 	}
 	c <- key
