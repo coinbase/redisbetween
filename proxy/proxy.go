@@ -358,17 +358,17 @@ func (p *Proxy) checkSingleConnection(key string, c chan string) {
 	ls := p.getListenerServerPair(key)
 	p.log.Debug("getListenerServerPair returned", zap.String("ls!=nil", strconv.FormatBool(ls != nil)))
 	if ls != nil {
-		failing := false
+		healthy := true
 		messenger := messenger.WireMessenger{}
 		for i := 0; i < int(p.config.ServerHealthCheckThreshold); i++ {
 			time.Sleep(1 * time.Second)
-			failing = !p.pingServer(ls.Server, messenger)
-			p.log.Debug("Finished pinging server", zap.String("server", key))
-			if !failing {
+			healthy = p.pingServer(ls.Server, messenger)
+			p.log.Debug("Finished pinging server", zap.String("server", key), zap.String("healthy", strconv.FormatBool(healthy)))
+			if healthy {
 				break
 			}
 		}
-		if failing {
+		if !healthy {
 			p.log.Warn("Server failed to respond; Deleting the listener", zap.String("server", key))
 			p.deleteListener(key)
 			// Shutdown the old, failing listener
