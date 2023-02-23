@@ -355,12 +355,12 @@ func (p *Proxy) healthCheckConnections() {
 	p.log.Debug("Inside healthCheckConnections", zap.String("duration", duration.String()))
 	for {
 		time.Sleep(duration)
-		p.log.Debug("Just woke up to check connections")
+		p.log.Debug("Just woke up to healthcheck connections")
 		keys := p.getListenerKeys()
 		var wg sync.WaitGroup
 		for _, key := range keys {
 			wg.Add(1)
-			go p.healthCheckSingleConnection(key, wg)
+			go p.healthCheckSingleConnection(key, &wg)
 		}
 		wg.Wait()
 	}
@@ -379,9 +379,10 @@ func (p *Proxy) healthCheckConnections() {
 // In that case, just try to recreate the connections
 // The listeners that get removed will be re-created only during the intercepts of
 // CLUSTER NODES commands sent by the client
-func (p *Proxy) healthCheckSingleConnection(key string, wg sync.WaitGroup) {
+func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	p.log.Debug("Inside healthCheckSingleConnection", zap.String("server", key))
 	defer wg.Done()
+
 	ls := p.getListenerServerPair(key)
 	p.log.Debug("getListenerServerPair returned", zap.String("ls!=nil", strconv.FormatBool(ls != nil)))
 	if ls != nil {
@@ -398,13 +399,14 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg sync.WaitGroup) {
 		if !healthy {
 			p.log.Warn("Server failed to respond; Deleting the listener", zap.String("server", key))
 			p.deleteListener(key)
-			// Shutdown the old, failing listener
-			ls.Listener.Shutdown()
 			if key == p.upstreamConfigHost {
 				// add the upstream config host back; we always need to have that minimally
 				// but hopefully this time, the connection is re-established to the right IP
 				p.log.Info("Server failed to respond; Recreating the listener for upstreamConfigHost", zap.String("server", key))
 				p.ensureListenerForUpstream(key, "")
+			} else {
+				// Shutdown the old, failing listener if not the main one
+				ls.Listener.Shutdown()
 			}
 		}
 	}
