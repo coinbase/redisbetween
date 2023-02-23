@@ -209,14 +209,15 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 		if originalCmds[i] == "CLUSTER NODES" {
 			if m.IsBulkBytes() {
 				lines := strings.Split(string(m.Value), "\n")
+				hostPorts := make(map[string]struct{})
 				for _, line := range lines {
 					lt := strings.IndexByte(line, ' ')
 					rt := strings.IndexByte(line, '@')
 					if lt > 0 && rt > 0 {
-						hostPort := line[lt+1 : rt]
-						p.ensureListenerForUpstream(hostPort, originalCmds[i])
+						hostPorts[line[lt+1:rt]] = struct{}{}
 					}
 				}
+				p.ensureNewListenersRemoveOld(hostPorts)
 			}
 		}
 
@@ -231,6 +232,32 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 				p.ensureListenerForUpstream(parts[2], originalCmds[i]+" "+parts[0])
 			}
 		}
+	}
+}
+
+// ensureNewListenersRemoveOld() creates new Listeners for nodes that didn't exist before
+// It also cleans up existing listeners for which no nodes exist anymore (with the exception of local config host)
+func (p *Proxy) ensureNewListenersRemoveOld(newNodes map[string]struct{}) {
+	func() {
+		p.listenerLock.Lock()
+		defer p.listenerLock.Unlock()
+		for k, ls := range p.listeners {
+			if _, ok := newNodes[k]; ok {
+				// remove it so we don't create a listener below
+				delete(newNodes, k)
+				continue
+			}
+			// We don't want to remove this special host
+			if k == p.upstreamConfigHost {
+				continue
+			}
+			p.log.Warn("Node not in new topology; Removing the listener", zap.String("node", k))
+			ls.Listener.Shutdown()
+			delete(p.listeners, k)
+		}
+	}()
+	for k, _ := range newNodes {
+		p.ensureListenerForUpstream(k, "CLUSTER NODES")
 	}
 }
 
