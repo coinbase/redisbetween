@@ -103,6 +103,12 @@ Usage: bin/redisbetween [OPTIONS] uri1 [uri2] ...
     	statsd address (default "localhost:8125")
   -unlink
     	unlink existing unix sockets before listening
+  -healthcheck
+      start a background process to check the health of server connections
+  -healthcheckcycle
+      number of seconds after which the healthcheck process should repeat itself (default 60s)
+  -healthcheckthreshold
+      count of consecutive healthcheck failures after which a server is declared unhealthy (default 3)
 ```
 
 Each URI can specify the following settings as GET params:
