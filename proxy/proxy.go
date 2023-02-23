@@ -169,7 +169,7 @@ func (p *Proxy) run() error {
 	p.listenerLock.Unlock()
 
 	if p.config.HealthCheck {
-		go p.checkConnections()
+		go p.healthCheckConnections()
 	}
 	return nil
 }
@@ -350,20 +350,19 @@ func (p *Proxy) createListenerServerPair(local, upstream string) (*ListenerServe
 // This should ideally by its own class with a healthcheck strategy
 // Due to timeline pressures we'll just use this basic scheme
 // to avoid repeated loops of Timeout on the redis client
-func (p *Proxy) checkConnections() {
+func (p *Proxy) healthCheckConnections() {
 	duration := time.Duration(p.config.ServerHealthCheckSec) * time.Second
-	p.log.Debug("Inside checkConnections", zap.String("duration", duration.String()))
+	p.log.Debug("Inside healthCheckConnections", zap.String("duration", duration.String()))
 	for {
 		time.Sleep(duration)
 		p.log.Debug("Just woke up to check connections")
 		keys := p.getListenerKeys()
-		c := make(chan string)
+		var wg sync.WaitGroup
 		for _, key := range keys {
-			go p.checkSingleConnection(key, c)
+			wg.Add(1)
+			go p.healthCheckSingleConnection(key, wg)
 		}
-		for range keys {
-			<-c
-		}
+		wg.Wait()
 	}
 }
 
@@ -380,8 +379,9 @@ func (p *Proxy) checkConnections() {
 // In that case, just try to recreate the connections
 // The listeners that get removed will be re-created only during the intercepts of
 // CLUSTER NODES commands sent by the client
-func (p *Proxy) checkSingleConnection(key string, c chan string) {
-	p.log.Debug("Inside checkSingleConnection", zap.String("server", key))
+func (p *Proxy) healthCheckSingleConnection(key string, wg sync.WaitGroup) {
+	p.log.Debug("Inside healthCheckSingleConnection", zap.String("server", key))
+	defer wg.Done()
 	ls := p.getListenerServerPair(key)
 	p.log.Debug("getListenerServerPair returned", zap.String("ls!=nil", strconv.FormatBool(ls != nil)))
 	if ls != nil {
@@ -408,7 +408,6 @@ func (p *Proxy) checkSingleConnection(key string, c chan string) {
 			}
 		}
 	}
-	c <- key
 }
 
 // Safely grab an entry for a given key from the listeners map
