@@ -19,7 +19,6 @@ import (
 	"github.com/coinbase/mongobetween/util"
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/handlers"
-	"github.com/coinbase/redisbetween/messenger"
 	"github.com/coinbase/redisbetween/redis"
 	"github.com/mediocregopher/radix/v3"
 
@@ -29,22 +28,8 @@ import (
 
 const restartSleep = 1 * time.Second
 const disconnectTimeout = 10 * time.Second
-
-var pingMessage = func() func() []*redis.Message {
-	wm := []*redis.Message{
-		redis.NewArray([]*redis.Message{
-			redis.NewBulkBytes([]byte("PING")),
-		}),
-	}
-	return func() []*redis.Message { return wm }
-}()
-
+const ping = "*1\r\n$4\r\nPING\r\n"
 const pong = "PONG"
-
-type ListenerServerPair struct {
-	Listener *listener.Listener
-	Server   *pool.Server
-}
 
 type Proxy struct {
 	log    *zap.Logger
@@ -64,7 +49,7 @@ type Proxy struct {
 	quit chan interface{}
 	kill chan interface{}
 
-	listeners    map[string]*ListenerServerPair
+	listeners    map[string]*listener.Listener
 	listenerLock sync.Mutex
 	listenerWg   sync.WaitGroup
 
@@ -98,7 +83,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
 
-		listeners:    make(map[string]*ListenerServerPair),
+		listeners:    make(map[string]*listener.Listener),
 		reservations: handlers.NewReservations(maxSub, maxBlk, sd),
 	}, nil
 }
@@ -113,7 +98,7 @@ func (p *Proxy) Shutdown() {
 	}()
 	p.listenerLock.Lock()
 	for _, ls := range p.listeners {
-		ls.Listener.Shutdown()
+		ls.Shutdown()
 	}
 	p.listenerLock.Unlock()
 
@@ -128,7 +113,7 @@ func (p *Proxy) Kill() {
 	}()
 	p.listenerLock.Lock()
 	for _, ls := range p.listeners {
-		ls.Listener.Kill()
+		ls.Kill()
 	}
 	p.listenerLock.Unlock()
 	close(p.kill)
@@ -151,7 +136,7 @@ func (p *Proxy) run() error {
 		}
 	}()
 
-	ls, err := p.createListenerServerPair(p.localConfigHost, p.upstreamConfigHost)
+	ls, err := p.createListener(p.localConfigHost, p.upstreamConfigHost)
 	if err != nil {
 		return err
 	} else {
@@ -162,9 +147,9 @@ func (p *Proxy) run() error {
 	}()
 
 	p.listenerLock.Lock()
-	p.listeners[p.upstreamConfigHost] = ls
-	for _, ls := range p.listeners {
-		p.runListener(ls.Listener)
+	p.listeners[p.localConfigHost] = ls
+	for _, ls = range p.listeners {
+		p.runListener(ls)
 	}
 	p.listenerLock.Unlock()
 
@@ -252,7 +237,7 @@ func (p *Proxy) ensureNewListenersRemoveOld(newNodes map[string]struct{}) {
 				continue
 			}
 			p.log.Warn("Node not in new topology; Removing the listener", zap.String("node", k))
-			ls.Listener.Shutdown()
+			ls.Shutdown()
 			delete(p.listeners, k)
 		}
 	}()
@@ -276,20 +261,20 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 	p.log.Info("ensuring we have a listener for", zap.String("upstream", upstream), zap.String("command", originalCmd))
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
-	_, ok := p.listeners[upstream]
+	local := localSocketPathFromUpstream(upstream, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+	_, ok := p.listeners[local]
 	if !ok {
-		local := localSocketPathFromUpstream(upstream, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
 		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local), zap.String("command", originalCmd))
-		ls, err := p.createListenerServerPair(local, upstream)
+		ls, err := p.createListener(local, upstream)
 		if err != nil {
 			p.log.Error("unable to create listener", zap.Error(err))
 		}
-		p.listeners[upstream] = ls
-		p.runListener(ls.Listener)
+		p.listeners[local] = ls
+		p.runListener(ls)
 	}
 }
 
-func (p *Proxy) createListenerServerPair(local, upstream string) (*ListenerServerPair, error) {
+func (p *Proxy) createListener(local, upstream string) (*listener.Listener, error) {
 	logWith := p.log.With(zap.String("upstream", upstream), zap.String("local", local))
 	sdWith, err := util.StatsdWithTags(p.statsd, []string{fmt.Sprintf("upstream:%s", upstream), fmt.Sprintf("local:%s", local)})
 	if err != nil {
@@ -340,10 +325,7 @@ func (p *Proxy) createListenerServerPair(local, upstream string) (*ListenerServe
 	if err != nil {
 		return nil, err
 	}
-	return &ListenerServerPair{
-		Listener: listener,
-		Server:   s,
-	}, nil
+	return listener, nil
 }
 
 // Go through all listeners and health check their servers
@@ -383,42 +365,37 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	p.log.Debug("Inside healthCheckSingleConnection", zap.String("server", key))
 	defer wg.Done()
 
-	ls := p.getListenerServerPair(key)
-	p.log.Debug("getListenerServerPair returned", zap.String("ls!=nil", strconv.FormatBool(ls != nil)))
-	if ls != nil {
-		healthy := true
-		messenger := messenger.WireMessenger{}
-		for i := 0; i < int(p.config.ServerHealthCheckThreshold); i++ {
-			time.Sleep(1 * time.Second)
-			healthy = p.pingServer(ls.Server, messenger)
-			p.log.Debug("Finished pinging server", zap.String("server", key), zap.String("healthy", strconv.FormatBool(healthy)))
-			if healthy {
-				break
-			}
+	healthy := true
+	for i := 0; i < int(p.config.ServerHealthCheckThreshold); i++ {
+		time.Sleep(1 * time.Second)
+		healthy = p.pingServer(key)
+		p.log.Debug("Finished pinging server", zap.String("server", key), zap.String("healthy", strconv.FormatBool(healthy)))
+		if healthy {
+			break
 		}
-		if !healthy {
-			p.log.Warn("Server failed to respond; Deleting the listener", zap.String("server", key))
-			p.deleteListener(key)
-			if key == p.upstreamConfigHost {
-				// add the upstream config host back; we always need to have that minimally
-				// but hopefully this time, the connection is re-established to the right IP
-				p.log.Info("Server failed to respond; Recreating the listener for upstreamConfigHost", zap.String("server", key))
-				p.ensureListenerForUpstream(key, "")
-			} else {
-				// Shutdown the old, failing listener if not the main one
-				ls.Listener.Shutdown()
-			}
+	}
+	if !healthy {
+		p.log.Warn("Server failed to respond; Deleting the listener", zap.String("server", key))
+		p.deleteListener(key)
+		if key == p.localConfigHost {
+			// add the upstream config host back; we always need to have that minimally
+			// but hopefully this time, the connection is re-established to the right IP
+			p.log.Warn("Server failed to respond; Recreating the listener for upstreamConfigHost", zap.String("server", key))
+			p.ensureListenerForUpstream(key, "")
+		} else {
+			// Shutdown the old, failing listener if not the main one
+			p.getListener(key).Shutdown()
 		}
 	}
 }
 
 // Safely grab an entry for a given key from the listeners map
-func (p *Proxy) getListenerServerPair(key string) *ListenerServerPair {
+func (p *Proxy) getListener(key string) *listener.Listener {
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
-	pair, ok := p.listeners[key]
+	ls, ok := p.listeners[key]
 	if ok {
-		return pair
+		return ls
 	}
 	return nil
 }
@@ -442,35 +419,24 @@ func (p *Proxy) getListenerKeys() []string {
 }
 
 // Use the redis PING command (response: PONG) to determine if the connection is healthy
-func (p *Proxy) pingServer(s *pool.Server, m messenger.Messenger) bool {
-	var conn pool.ConnectionWrapper
-	ctx := context.Background()
-	conn, err := s.Connection(ctx)
+func (p *Proxy) pingServer(address string) bool {
+	dlr := &net.Dialer{Timeout: 30 * time.Second}
+	conn, err := dlr.DialContext(context.Background(), p.config.Network, address)
 	if err != nil {
+		p.log.Error("failed to open local address", zap.String("local", address), zap.Error(err))
 		return false
 	}
-	defer func() {
-		p.log.Debug("Connection returned to pool (from pingServer)")
-		_ = conn.Return()
-	}()
-
-	wm := pingMessage()
-	address := conn.Address().String()
-	err = m.Write(ctx, p.log, wm, conn.Conn(), address, conn.ID(), p.writeTimeout, false, conn.Close)
-	p.log.Debug("Just sent the PING", zap.String("server", address), zap.String("message", wm[0].String()), zap.Error(err))
+	_, err = conn.Write([]byte(ping))
 	if err != nil {
+		p.log.Error("failed to write PING", zap.Error(err))
 		return false
 	}
-
-	res, err := m.Read(ctx, p.log, conn.Conn(), address, conn.ID(), p.readTimeout, len(wm), false, conn.Close)
-	if err != nil || len(res) != 1 {
+	resp := make([]byte, 7)
+	_, err = io.ReadFull(conn, resp)
+	if err != nil || !strings.Contains(string(resp), pong) {
+		p.log.Error("expected PONG in response but got error", zap.String("response", string(resp)), zap.Error(err))
 		return false
 	}
-	p.log.Debug("Response from PING", zap.String("server", address), zap.String("response", res[0].String()))
-	if !strings.Contains(res[0].String(), pong) {
-		return false
-	}
-
 	return true
 }
 
