@@ -223,35 +223,21 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 // ensureNewListenersRemoveOld() creates new Listeners for nodes that didn't exist before
 // It also cleans up existing listeners for which no nodes exist anymore (with the exception of local config host)
 func (p *Proxy) ensureNewListenersRemoveOld(newNodes []string) {
-	// convert to local socker addresses first
-	fmt.Println(newNodes)
-	var newLocals = make(map[string]string)
-	for _, n := range newNodes {
-		local := localSocketPathFromUpstream(n, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
-		newLocals[local] = n
+	var localFromNode localPathFromHostPort = func(hostport string) string {
+		return localSocketPathFromUpstream(hostport, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
 	}
-	func() {
-		p.listenerLock.Lock()
-		defer p.listenerLock.Unlock()
-		// compare with existing listeners; remove old listeners
-		for k, ls := range p.listeners {
-			if _, ok := newLocals[k]; ok {
-				// remove it so we don't create a listener below
-				delete(newLocals, k)
-				continue
-			}
-			// We don't want to remove this special host
-			if k == p.localConfigHost {
-				continue
-			}
-			p.log.Warn("Node not in new topology; Removing the listener", zap.String("node", k))
-			ls.Shutdown()
-			delete(p.listeners, k)
+	localsToRemove, hostPortsToAdd := compareNewNodesWithExisting(newNodes, p.getListenerKeys(), localFromNode)
+	for _, local := range localsToRemove {
+		// we should never remove the localConfigHost unless we're adding it right back
+		if local == p.localConfigHost {
+			continue
 		}
-	}()
+		p.removeListener(local)
+	}
+
 	// finally add the new ones
-	for _, v := range newLocals {
-		p.ensureListenerForUpstream(v, "CLUSTER NODES")
+	for _, hostport := range hostPortsToAdd {
+		p.ensureListenerForUpstream(hostport, "Topology Refresh")
 	}
 }
 
@@ -348,7 +334,6 @@ func (p *Proxy) healthCheckConnections() {
 		time.Sleep(duration)
 		p.log.Debug("Just woke up to healthcheck connections")
 		keys := p.getListenerKeys()
-		fmt.Println(keys)
 		var wg sync.WaitGroup
 		for _, key := range keys {
 			wg.Add(1)
@@ -378,7 +363,7 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	healthy := true
 	for i := 0; i < int(p.config.ServerHealthCheckThreshold); i++ {
 		time.Sleep(1 * time.Second)
-		healthy = p.pingServer(key)
+		healthy = pingServer(p.config.Network, key, p.readTimeout, p.writeTimeout, p.log)
 		p.log.Debug("Finished pinging server", zap.String("server", key), zap.String("healthy", strconv.FormatBool(healthy)))
 		if healthy {
 			break
@@ -386,15 +371,12 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	}
 	if !healthy {
 		p.log.Warn("Server failed to respond; Deleting the listener", zap.String("server", key))
-		p.deleteListener(key)
+		p.removeListener(key)
 		if key == p.localConfigHost {
 			// add the upstream config host back; we always need to have that minimally
 			// but hopefully this time, the connection is re-established to the right IP
 			p.log.Warn("Server failed to respond; Recreating the listener for upstreamConfigHost", zap.String("server", key))
 			p.ensureListenerForUpstream(key, "")
-		} else {
-			// Shutdown the old, failing listener if not the main one
-			p.getListener(key).Shutdown()
 		}
 	}
 }
@@ -411,9 +393,13 @@ func (p *Proxy) getListener(key string) *listener.Listener {
 }
 
 // Safely delete a listener from the map
-func (p *Proxy) deleteListener(key string) {
+func (p *Proxy) removeListener(key string) {
 	p.listenerLock.Lock()
-	delete(p.listeners, key)
+	ls, ok := p.listeners[key]
+	if ok {
+		ls.Shutdown()
+		delete(p.listeners, key)
+	}
 	p.listenerLock.Unlock()
 }
 
@@ -426,31 +412,6 @@ func (p *Proxy) getListenerKeys() []string {
 		keys = append(keys, key)
 	}
 	return keys
-}
-
-// Use the redis PING command (response: PONG) to determine if the connection is healthy
-func (p *Proxy) pingServer(address string) bool {
-	dlr := &net.Dialer{Timeout: 30 * time.Second}
-	conn, err := dlr.DialContext(context.Background(), p.config.Network, address)
-	if err != nil {
-		p.log.Error("failed to open local address", zap.String("local", address), zap.Error(err))
-		return false
-	}
-	defer conn.Close()
-	conn.SetWriteDeadline(time.Now().Add(p.writeTimeout))
-	_, err = conn.Write([]byte(ping))
-	if err != nil {
-		p.log.Error("failed to write PING", zap.Error(err))
-		return false
-	}
-	conn.SetReadDeadline(time.Now().Add(p.readTimeout))
-	resp := make([]byte, 7)
-	_, err = io.ReadFull(conn, resp)
-	if err != nil || !strings.Contains(string(resp), pong) {
-		p.log.Error("expected PONG in response but got error", zap.String("response", string(resp)), zap.Error(err))
-		return false
-	}
-	return true
 }
 
 func connectWithInitCommand(command []byte, logWith *zap.Logger) pool.ConnectionOption {
@@ -504,4 +465,62 @@ func poolMonitor(sd *statsd.Client) *pool.Monitor {
 			}
 		},
 	}
+}
+
+// For a given set of host:ports are the new topology for a cluster, determine which ones to be added and which older nodes to be removed
+type localPathFromHostPort func(string) string
+
+// given an array of new nodes and an array of existing local addresses it determines
+// which nodes don't exist and needs to be added; also which local addresses are not longer a part of the cluster
+func compareNewNodesWithExisting(newNodes []string, existingLocals []string, fn localPathFromHostPort) (localsToRemove []string, hostPortsToAdd []string) {
+	// convert to local socker addresses first
+	var newLocals = make(map[string]string)
+	for _, hostport := range newNodes {
+		local := fn(hostport)
+		newLocals[local] = hostport
+	}
+	// compare with existing local addresses
+	for _, local := range existingLocals {
+		if _, ok := newLocals[local]; ok {
+			// remove it so we don't create a listener below
+			delete(newLocals, local)
+			continue
+		}
+		localsToRemove = append(localsToRemove, local)
+	}
+	for _, hostport := range newLocals {
+		hostPortsToAdd = append(hostPortsToAdd, hostport)
+	}
+	return
+}
+
+// Use the redis PING command (response: PONG) to determine if the connection is healthy
+func pingServer(network, address string, readTimeout, writeTimeout time.Duration, logger *zap.Logger) bool {
+	dlr := &net.Dialer{Timeout: 30 * time.Second}
+	conn, err := dlr.DialContext(context.Background(), network, address)
+	if err != nil {
+		if logger != nil {
+			logger.Error("failed to open local address", zap.String("local", address), zap.Error(err))
+		}
+		return false
+	}
+	defer conn.Close()
+	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	_, err = conn.Write([]byte(ping))
+	if err != nil {
+		if logger != nil {
+			logger.Error("failed to write PING", zap.Error(err))
+		}
+		return false
+	}
+	conn.SetReadDeadline(time.Now().Add(readTimeout))
+	resp := make([]byte, 7)
+	_, err = io.ReadFull(conn, resp)
+	if err != nil || !strings.Contains(string(resp), pong) {
+		if logger != nil {
+			logger.Error("expected PONG in response but got error", zap.String("response", string(resp)), zap.Error(err))
+		}
+		return false
+	}
+	return true
 }
