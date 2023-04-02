@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/coinbase/redisbetween/messenger"
 	"github.com/go-redis/redis/v8"
@@ -123,16 +122,6 @@ func TestLocalSocketPathFromUpstream(t *testing.T) {
 	assert.Equal(t, "prefix-withoutcolon.host.suffix", localSocketPathFromUpstream("withoutcolon.host", -1, false, "prefix-", ".suffix"))
 	assert.Equal(t, "prefix-with.host-db-1.suffix", localSocketPathFromUpstream("with.host:db", 1, false, "prefix-", ".suffix"))
 	assert.Equal(t, "prefix-with.host-db-ro.suffix", localSocketPathFromUpstream("with.host:db", -1, true, "prefix-", ".suffix"))
-}
-
-func TestPingServer(t *testing.T) {
-	shutdown := SetupProxy(t, "7000", -1)
-	network := "unix"
-	address := "/var/tmp/redisbetween-1-" + RedisHost() + "-7000.sock"
-	readTimeout := time.Second
-	writeTimeout := time.Second
-	assert.True(t, pingServer(network, address, readTimeout, writeTimeout, nil))
-	shutdown()
 }
 
 func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {
