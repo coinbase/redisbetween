@@ -194,12 +194,12 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 		if originalCmds[i] == "CLUSTER NODES" {
 			if m.IsBulkBytes() {
 				lines := strings.Split(string(m.Value), "\n")
-				hostPorts := make(map[string]struct{})
+				var hostPorts []string
 				for _, line := range lines {
 					lt := strings.IndexByte(line, ' ')
 					rt := strings.IndexByte(line, '@')
 					if lt > 0 && rt > 0 {
-						hostPorts[line[lt+1:rt]] = struct{}{}
+						hostPorts = append(hostPorts, line[lt+1:rt])
 					}
 				}
 				p.ensureNewListenersRemoveOld(hostPorts)
@@ -222,18 +222,26 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 
 // ensureNewListenersRemoveOld() creates new Listeners for nodes that didn't exist before
 // It also cleans up existing listeners for which no nodes exist anymore (with the exception of local config host)
-func (p *Proxy) ensureNewListenersRemoveOld(newNodes map[string]struct{}) {
+func (p *Proxy) ensureNewListenersRemoveOld(newNodes []string) {
+	// convert to local socker addresses first
+	fmt.Println(newNodes)
+	var newLocals = make(map[string]string)
+	for _, n := range newNodes {
+		local := localSocketPathFromUpstream(n, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+		newLocals[local] = n
+	}
 	func() {
 		p.listenerLock.Lock()
 		defer p.listenerLock.Unlock()
+		// compare with existing listeners; remove old listeners
 		for k, ls := range p.listeners {
-			if _, ok := newNodes[k]; ok {
+			if _, ok := newLocals[k]; ok {
 				// remove it so we don't create a listener below
-				delete(newNodes, k)
+				delete(newLocals, k)
 				continue
 			}
 			// We don't want to remove this special host
-			if k == p.upstreamConfigHost {
+			if k == p.localConfigHost {
 				continue
 			}
 			p.log.Warn("Node not in new topology; Removing the listener", zap.String("node", k))
@@ -241,8 +249,9 @@ func (p *Proxy) ensureNewListenersRemoveOld(newNodes map[string]struct{}) {
 			delete(p.listeners, k)
 		}
 	}()
-	for k, _ := range newNodes {
-		p.ensureListenerForUpstream(k, "CLUSTER NODES")
+	// finally add the new ones
+	for _, v := range newLocals {
+		p.ensureListenerForUpstream(v, "CLUSTER NODES")
 	}
 }
 
@@ -339,6 +348,7 @@ func (p *Proxy) healthCheckConnections() {
 		time.Sleep(duration)
 		p.log.Debug("Just woke up to healthcheck connections")
 		keys := p.getListenerKeys()
+		fmt.Println(keys)
 		var wg sync.WaitGroup
 		for _, key := range keys {
 			wg.Add(1)
@@ -426,11 +436,14 @@ func (p *Proxy) pingServer(address string) bool {
 		p.log.Error("failed to open local address", zap.String("local", address), zap.Error(err))
 		return false
 	}
+	defer conn.Close()
+	conn.SetWriteDeadline(time.Now().Add(p.writeTimeout))
 	_, err = conn.Write([]byte(ping))
 	if err != nil {
 		p.log.Error("failed to write PING", zap.Error(err))
 		return false
 	}
+	conn.SetReadDeadline(time.Now().Add(p.readTimeout))
 	resp := make([]byte, 7)
 	_, err = io.ReadFull(conn, resp)
 	if err != nil || !strings.Contains(string(resp), pong) {
