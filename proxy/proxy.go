@@ -375,7 +375,6 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 		if key == p.localConfigHost {
 			// add the upstream config host back; we always need to have that minimally
 			// but hopefully this time, the connection is re-established to the right IP
-			p.log.Warn("Server failed to respond; Recreating the listener for upstreamConfigHost", zap.String("server", key))
 			p.ensureListenerForUpstream(key, "")
 		}
 	}
