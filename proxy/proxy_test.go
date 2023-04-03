@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -137,20 +136,13 @@ func TestPingServer(t *testing.T) {
 }
 
 func TestNewNodeComparison(t *testing.T) {
-	toLocal := func(s string) string {
-		return strings.Replace(s, ":", "-", -1)
-	}
 	existingNodes := [3]string{"host1:port1", "host2:port2", "host3:port3"}
-	var existingLocals []string
-	for _, n := range existingNodes {
-		existingLocals = append(existingLocals, toLocal(n))
-	}
 	newNodes := [3]string{"host4:port4", "host2:port2", "host3:port3"}
-	tobeRemoved, tobeAdded := compareNewNodesWithExisting(newNodes[:], existingLocals, toLocal)
+	tobeRemoved, tobeAdded := compareNewNodesWithExisting(newNodes[:], existingNodes[:])
 	assert.Equal(t, 1, len(tobeAdded))
 	assert.Equal(t, 1, len(tobeRemoved))
 	assert.Equal(t, "host4:port4", tobeAdded[0])
-	assert.Equal(t, "host1-port1", tobeRemoved[0])
+	assert.Equal(t, "host1:port1", tobeRemoved[0])
 }
 
 func assertResponse(t *testing.T, cmd command, c *redis.ClusterClient) {

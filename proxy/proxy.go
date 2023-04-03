@@ -147,7 +147,7 @@ func (p *Proxy) run() error {
 	}()
 
 	p.listenerLock.Lock()
-	p.listeners[p.localConfigHost] = ls
+	p.listeners[p.upstreamConfigHost] = ls
 	for _, ls = range p.listeners {
 		p.runListener(ls)
 	}
@@ -223,21 +223,18 @@ func (p *Proxy) interceptMessages(originalCmds []string, mm []*redis.Message) {
 // ensureNewListenersRemoveOld() creates new Listeners for nodes that didn't exist before
 // It also cleans up existing listeners for which no nodes exist anymore (with the exception of local config host)
 func (p *Proxy) ensureNewListenersRemoveOld(newNodes []string) {
-	var localFromNode localPathFromHostPort = func(hostport string) string {
-		return localSocketPathFromUpstream(hostport, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
-	}
-	localsToRemove, hostPortsToAdd := compareNewNodesWithExisting(newNodes, p.getListenerKeys(), localFromNode)
-	for _, local := range localsToRemove {
-		// we should never remove the localConfigHost unless we're adding it right back
-		if local == p.localConfigHost {
+	nodesToRemove, nodesToAdd := compareNewNodesWithExisting(newNodes, p.getListenerKeys())
+	for _, node := range nodesToRemove {
+		// we should never remove the upstreamConfigHost unless we're adding it right back
+		if node == p.upstreamConfigHost {
 			continue
 		}
-		p.removeListener(local)
+		p.removeListener(node)
 	}
 
 	// finally add the new ones
-	for _, hostport := range hostPortsToAdd {
-		p.ensureListenerForUpstream(hostport, "Topology Refresh")
+	for _, node := range nodesToAdd {
+		p.ensureListenerForUpstream(node, "Topology Refresh")
 	}
 }
 
@@ -256,15 +253,15 @@ func (p *Proxy) ensureListenerForUpstream(upstream, originalCmd string) {
 	p.log.Info("ensuring we have a listener for", zap.String("upstream", upstream), zap.String("command", originalCmd))
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
-	local := localSocketPathFromUpstream(upstream, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
-	_, ok := p.listeners[local]
+	_, ok := p.listeners[upstream]
 	if !ok {
+		local := localSocketPathFromUpstream(upstream, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
 		p.log.Info("did not find listener, creating new one", zap.String("upstream", upstream), zap.String("local", local), zap.String("command", originalCmd))
 		ls, err := p.createListener(local, upstream)
 		if err != nil {
 			p.log.Error("unable to create listener", zap.Error(err))
 		}
-		p.listeners[local] = ls
+		p.listeners[upstream] = ls
 		p.runListener(ls)
 	}
 }
@@ -363,7 +360,8 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	healthy := true
 	for i := 0; i < int(p.config.ServerHealthCheckThreshold); i++ {
 		time.Sleep(1 * time.Second)
-		healthy = pingServer(p.config.Network, key, p.readTimeout, p.writeTimeout, p.log)
+		localAddress := localSocketPathFromUpstream(key, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
+		healthy = pingServer(p.config.Network, localAddress, p.readTimeout, p.writeTimeout, p.log)
 		p.log.Debug("Finished pinging server", zap.String("server", key), zap.String("healthy", strconv.FormatBool(healthy)))
 		if healthy {
 			break
@@ -466,29 +464,25 @@ func poolMonitor(sd *statsd.Client) *pool.Monitor {
 	}
 }
 
-// For a given set of host:ports are the new topology for a cluster, determine which ones to be added and which older nodes to be removed
-type localPathFromHostPort func(string) string
-
-// given an array of new nodes and an array of existing local addresses it determines
-// which nodes don't exist and needs to be added; also which local addresses are not longer a part of the cluster
-func compareNewNodesWithExisting(newNodes []string, existingLocals []string, fn localPathFromHostPort) (localsToRemove []string, hostPortsToAdd []string) {
+// given an array of new nodes and an array of existing nodes it determines
+// which nodes don't exist and needs to be added; also which nodes are not longer a part of the cluster
+func compareNewNodesWithExisting(newNodes []string, existingNodes []string) (nodesToRemove, nodesToAdd []string) {
 	// convert to local socker addresses first
-	var newLocals = make(map[string]string)
-	for _, hostport := range newNodes {
-		local := fn(hostport)
-		newLocals[local] = hostport
+	var newNodesMap = make(map[string]bool)
+	for _, node := range newNodes {
+		newNodesMap[node] = true
 	}
 	// compare with existing local addresses
-	for _, local := range existingLocals {
-		if _, ok := newLocals[local]; ok {
+	for _, node := range existingNodes {
+		if _, ok := newNodesMap[node]; ok {
 			// remove it so we don't create a listener below
-			delete(newLocals, local)
+			delete(newNodesMap, node)
 			continue
 		}
-		localsToRemove = append(localsToRemove, local)
+		nodesToRemove = append(nodesToRemove, node)
 	}
-	for _, hostport := range newLocals {
-		hostPortsToAdd = append(hostPortsToAdd, hostport)
+	for node, _ := range newNodesMap {
+		nodesToAdd = append(nodesToAdd, node)
 	}
 	return
 }
