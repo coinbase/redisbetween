@@ -465,17 +465,16 @@ func poolMonitor(sd *statsd.Client) *pool.Monitor {
 }
 
 // given an array of new nodes and an array of existing nodes it determines
-// which nodes don't exist and needs to be added; also which nodes are not longer a part of the cluster
+// which nodes don't exist and needs to be added; also which nodes are no longer a part of the cluster
 func compareNewNodesWithExisting(newNodes []string, existingNodes []string) (nodesToRemove, nodesToAdd []string) {
-	// convert to local socker addresses first
 	var newNodesMap = make(map[string]bool)
 	for _, node := range newNodes {
 		newNodesMap[node] = true
 	}
-	// compare with existing local addresses
+	// compare with existing nodes
 	for _, node := range existingNodes {
 		if _, ok := newNodesMap[node]; ok {
-			// remove it so we don't create a listener below
+      // duplicate: remove
 			delete(newNodesMap, node)
 			continue
 		}
