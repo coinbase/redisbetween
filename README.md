@@ -106,9 +106,11 @@ Usage: bin/redisbetween [OPTIONS] uri1 [uri2] ...
   -healthcheck
       start a background process to check the health of server connections
   -healthcheckcycle
-      number of seconds after which the healthcheck process should repeat itself (default 60s)
+      duration after which the healthcheck process should repeat itself (default 60s)
   -healthcheckthreshold
       count of consecutive healthcheck failures after which a server is declared unhealthy (default 3)
+  -idletimeout
+      how long can an inactive connection remain idle in the pool (default 0 meaning no timeout)
 ```
 
 Each URI can specify the following settings as GET params:
@@ -121,5 +123,6 @@ Each URI can specify the following settings as GET params:
 - `readonly` every connection issues a [READONLY](https://redis.io/commands/readonly) command before entering the pool. Defaults to false
 - `maxsubscriptions` sets the max number of channels that can be subscribed to at one time. Defaults to 1.
 - `maxblockers` sets the max number of commands that can be blocking at one time. Defaults to 1. 
+- `idletimeout` how long can an inactive connection remain idle in the pool. Default is the global level `idletimeout` or 0 (no timeout)
 
 Example: `./redisbetween -unlink -pretty -loglevel debug redis://localhost:7001?maxsubscriptions=2&maxblockers=2`

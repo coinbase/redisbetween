@@ -12,16 +12,16 @@ import (
 )
 
 type Messenger interface {
-	Read (ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*redis.Message, error)
-	Write (ctx context.Context, log *zap.Logger, wm []*redis.Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, wrapPipeline bool, close func() error) error
+	Read(ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*redis.Message, error)
+	Write(ctx context.Context, log *zap.Logger, wm []*redis.Message, nc net.Conn, address string, id uint64, writeTimeout time.Duration, wrapPipeline bool, close func() error) error
 }
 
-type WireMessenger struct { }
+type WireMessenger struct{}
 
 var PipelineSignalStartKey = []byte("🔜")
 var PipelineSignalEndKey = []byte("🔚")
 
-func (m WireMessenger) Read (ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*redis.Message, error) {
+func (m WireMessenger) Read(ctx context.Context, log *zap.Logger, nc net.Conn, address string, id uint64, readTimeout time.Duration, readMin int, checkPipelineSignals bool, close func() error) ([]*redis.Message, error) {
 	select {
 	case <-ctx.Done():
 		// We closeConnection the connection because we don't know if there is an unread message on the wire.
@@ -106,7 +106,6 @@ func (m WireMessenger) Write(ctx context.Context, log *zap.Logger, wm []*redis.M
 func isSignalMessage(m *redis.Message, signal []byte) bool {
 	return len(m.Array) == 2 && bytes.Equal(signal, m.Array[1].Value)
 }
-
 
 // slightly more optimized than `append` for building message slices
 func appendMessage(slice []*redis.Message, data ...*redis.Message) []*redis.Message {

@@ -16,23 +16,26 @@ import (
 )
 
 const defaultStatsdAddress = "localhost:8125"
+const defaultHealthCheckCycle = 60 * time.Second
+const defaultHealthCheckThreshold = 3
 
 var validNetworks = []string{"tcp", "tcp4", "tcp6", "unix", "unixpacket"}
 
 type Config struct {
-	Network                    string
-	LocalSocketPrefix          string
-	LocalSocketSuffix          string
-	Unlink                     bool
-	MinPoolSize                uint64
-	MaxPoolSize                uint64
-	Pretty                     bool
-	Statsd                     string
-	Level                      zapcore.Level
-	Upstreams                  []Upstream
-	HealthCheck                bool
-	ServerHealthCheckSec       uint64
-	ServerHealthCheckThreshold uint64
+	Network              string
+	LocalSocketPrefix    string
+	LocalSocketSuffix    string
+	Unlink               bool
+	MinPoolSize          uint64
+	MaxPoolSize          uint64
+	Pretty               bool
+	Statsd               string
+	Level                zapcore.Level
+	Upstreams            []Upstream
+	HealthCheck          bool
+	HealthCheckCycle     time.Duration
+	HealthCheckThreshold int
+	IdleTimeout          time.Duration
 }
 
 type Upstream struct {
@@ -46,6 +49,7 @@ type Upstream struct {
 	Readonly           bool
 	MaxSubscriptions   int
 	MaxBlockers        int
+	IdleTimeout        time.Duration
 }
 
 func ParseFlags() *Config {
@@ -76,7 +80,8 @@ func parseFlags() (*Config, error) {
 	var network, localSocketPrefix, localSocketSuffix, stats, loglevel string
 	var pretty, unlink bool
 	var healthCheck bool
-	var healthCheckThreshold, healthCheckCycle uint64
+	var healthCheckThreshold int
+	var healthCheckCycle, idleTimeout time.Duration
 	flag.StringVar(&network, "network", "unix", "One of: tcp, tcp4, tcp6, unix or unixpacket")
 	flag.StringVar(&localSocketPrefix, "localsocketprefix", "/var/tmp/redisbetween-", "Prefix to use for unix socket filenames")
 	flag.StringVar(&localSocketSuffix, "localsocketsuffix", ".sock", "Suffix to use for unix socket filenames")
@@ -85,8 +90,9 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
 	flag.BoolVar(&healthCheck, "healthcheck", false, "Start the routine to do health checks on redis servers")
-	flag.Uint64Var(&healthCheckCycle, "healthcheckcycle", 60, "Integer value for the cycle during which server connections will be health-checked (sec); Must be bigger than healthcheckthreshold * 1sec; default: 60s")
-	flag.Uint64Var(&healthCheckThreshold, "healthcheckthreshold", 3, "The number of concecutive failures needed to declare a server connection dead; default: 3")
+	flag.DurationVar(&healthCheckCycle, "healthcheckcycle", defaultHealthCheckCycle, "Duration for the cycle during which server connections will be health-checked; Must be larger than healthcheckthreshold * 1s; default: 60s")
+	flag.IntVar(&healthCheckThreshold, "healthcheckthreshold", defaultHealthCheckThreshold, "The number of concecutive failures needed to declare a server connection dead; default: 3")
+	flag.DurationVar(&idleTimeout, "idletimeout", 0, "Timeout value that a connection can remain idle; After this a connection is recreated; default: 0 (no timeout)")
 
 	// todo remove these flags in a follow up, after all envs have updated to the new url-param style of timeout config
 	var obsoleteArg string
@@ -131,26 +137,18 @@ func parseFlags() (*Config, error) {
 				return nil, err
 			}
 
-			rt, err := time.ParseDuration(getStringParam(params, "readtimeout", "5s"))
-			if err != nil {
-				return nil, err
-			}
-			wt, err := time.ParseDuration(getStringParam(params, "writetimeout", "5s"))
-			if err != nil {
-				return nil, err
-			}
-
 			us := Upstream{
 				UpstreamConfigHost: u.Host,
 				Label:              getStringParam(params, "label", ""),
 				MaxPoolSize:        getIntParam(params, "maxpoolsize", 10),
 				MinPoolSize:        getIntParam(params, "minpoolsize", 1),
 				Database:           db,
-				ReadTimeout:        rt,
-				WriteTimeout:       wt,
+				ReadTimeout:        getDurationParam(params, "readtimeout", 5*time.Second),
+				WriteTimeout:       getDurationParam(params, "writetimeout", 5*time.Second),
 				Readonly:           getBoolParam(params, "readonly"),
 				MaxSubscriptions:   getIntParam(params, "maxsubscriptions", 1),
 				MaxBlockers:        getIntParam(params, "maxblockers", 1),
+				IdleTimeout:        getDurationParam(params, "idletimeout", idleTimeout),
 			}
 
 			upstreams = append(upstreams, us)
@@ -175,17 +173,18 @@ func parseFlags() (*Config, error) {
 	}
 
 	return &Config{
-		Upstreams:                  upstreams,
-		Network:                    network,
-		LocalSocketPrefix:          localSocketPrefix,
-		LocalSocketSuffix:          localSocketSuffix,
-		Unlink:                     unlink,
-		Pretty:                     pretty,
-		Statsd:                     stats,
-		Level:                      level,
-		HealthCheck:                healthCheck,
-		ServerHealthCheckThreshold: healthCheckThreshold,
-		ServerHealthCheckSec:       healthCheckCycle,
+		Upstreams:            upstreams,
+		Network:              network,
+		LocalSocketPrefix:    localSocketPrefix,
+		LocalSocketSuffix:    localSocketSuffix,
+		Unlink:               unlink,
+		Pretty:               pretty,
+		Statsd:               stats,
+		Level:                level,
+		HealthCheck:          healthCheck,
+		HealthCheckThreshold: healthCheckThreshold,
+		HealthCheckCycle:     healthCheckCycle,
+		IdleTimeout:          idleTimeout,
 	}, nil
 }
 
@@ -221,4 +220,16 @@ func expandEnv(config string) string {
 	return regexp.MustCompile(`\${(\w+)}`).ReplaceAllStringFunc(config, func(s string) string {
 		return os.ExpandEnv(s)
 	})
+}
+
+func getDurationParam(v url.Values, key string, def time.Duration) time.Duration {
+	cl, ok := v[key]
+	if !ok {
+		return def
+	}
+	d, e := time.ParseDuration(cl[0])
+	if e != nil {
+		return def
+	}
+	return d
 }

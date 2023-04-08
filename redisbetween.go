@@ -94,7 +94,7 @@ func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err err
 		p, err := proxy.NewProxy(
 			log, s, c, u.Label, u.UpstreamConfigHost, u.Database,
 			u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout,
-			u.Readonly, u.MaxSubscriptions, u.MaxBlockers,
+			u.Readonly, u.MaxSubscriptions, u.MaxBlockers, u.IdleTimeout,
 		)
 
 		if err != nil {

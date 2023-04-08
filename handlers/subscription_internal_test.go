@@ -218,7 +218,7 @@ func getDefaultSubMessage() []*redis.Message {
 	}
 }
 
-func redisArraysEqual(arr1 []*redis.Message, arr2 []*redis.Message ) bool {
+func redisArraysEqual(arr1 []*redis.Message, arr2 []*redis.Message) bool {
 	if len(arr1) != len(arr2) {
 		return false
 	}

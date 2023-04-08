@@ -45,6 +45,7 @@ type Proxy struct {
 	writeTimeout       time.Duration
 	database           int
 	readonly           bool
+	idleTimeout        time.Duration
 
 	quit chan interface{}
 	kill chan interface{}
@@ -56,7 +57,7 @@ type Proxy struct {
 	reservations *handlers.Reservations
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int, idleTimeout time.Duration) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -79,6 +80,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, 
 		writeTimeout:       writeTimeout,
 		database:           database,
 		readonly:           readonly,
+		idleTimeout:        idleTimeout,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -277,6 +279,9 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 		pool.WithMaxConnections(func(uint64) uint64 { return uint64(p.maxPoolSize) }),
 		pool.WithConnectionPoolMonitor(func(*pool.Monitor) *pool.Monitor { return poolMonitor(sdWith) }),
 	}
+	if p.idleTimeout > 0 {
+		opts = append(opts, pool.WithIdleTimeout(func(time.Duration) time.Duration { return p.idleTimeout }))
+	}
 
 	var initCommand []byte
 
@@ -325,7 +330,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 // Due to timeline pressures we'll just use this basic scheme
 // to avoid repeated loops of Timeout on the redis client
 func (p *Proxy) healthCheckConnections() {
-	duration := time.Duration(p.config.ServerHealthCheckSec) * time.Second
+	duration := p.config.HealthCheckCycle
 	p.log.Debug("Inside healthCheckConnections", zap.String("duration", duration.String()))
 	for {
 		time.Sleep(duration)
@@ -358,7 +363,7 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	healthy := true
-	for i := 0; i < int(p.config.ServerHealthCheckThreshold); i++ {
+	for i := 0; i < p.config.HealthCheckThreshold; i++ {
 		time.Sleep(1 * time.Second)
 		localAddress := localSocketPathFromUpstream(key, p.database, p.readonly, p.config.LocalSocketPrefix, p.config.LocalSocketSuffix)
 		healthy = pingServer(p.config.Network, localAddress, p.readTimeout, p.writeTimeout, p.log)
@@ -474,7 +479,7 @@ func compareNewNodesWithExisting(newNodes []string, existingNodes []string) (nod
 	// compare with existing nodes
 	for _, node := range existingNodes {
 		if _, ok := newNodesMap[node]; ok {
-      // duplicate: remove
+			// duplicate: remove
 			delete(newNodesMap, node)
 			continue
 		}
