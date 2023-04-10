@@ -168,13 +168,17 @@ func TestIdleTimeoutPerUrl(t *testing.T) {
 		"-statsd", "statsd:1234",
 		"-unlink",
 		"-idletimeout", "10s",
-		"redis://localhost:7000/0?idletimeout=30s",
+		"redis://localhost:7001/0",
+		"redis://localhost:7002/0?idletimeout=0s",
+		"redis://localhost:7003/0?idletimeout=30s",
 	}
 
 	resetFlags()
 	c, err := parseFlags()
 	assert.NoError(t, err)
-	assert.Equal(t, 30*time.Second, c.Upstreams[0].IdleTimeout)
+	assert.Equal(t, 10*time.Second, c.Upstreams[0].IdleTimeout)
+	assert.Equal(t, time.Duration(0), c.Upstreams[1].IdleTimeout)
+	assert.Equal(t, 30*time.Second, c.Upstreams[2].IdleTimeout)
 }
 
 func TestHealthcheckArgs(t *testing.T) {

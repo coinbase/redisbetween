@@ -31,6 +31,13 @@ const disconnectTimeout = 10 * time.Second
 const ping = "*1\r\n$4\r\nPING\r\n"
 const pong = "PONG"
 
+type StatsdBackgroundGaugeCallback func(name string, tags []string)
+
+type statsdCounters struct {
+	listenerInc StatsdBackgroundGaugeCallback
+	listenerDec StatsdBackgroundGaugeCallback
+}
+
 type Proxy struct {
 	log    *zap.Logger
 	statsd *statsd.Client
@@ -55,6 +62,7 @@ type Proxy struct {
 	listenerWg   sync.WaitGroup
 
 	reservations *handlers.Reservations
+	statsdCounters
 }
 
 func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int, idleTimeout time.Duration) (*Proxy, error) {
@@ -322,6 +330,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	if err != nil {
 		return nil, err
 	}
+	p.statsdCounters.listenerInc("listeners.count", []string{fmt.Sprintf("upstream:%s", upstream)})
 	return listener, nil
 }
 
@@ -401,6 +410,7 @@ func (p *Proxy) removeListener(key string) {
 	if ok {
 		ls.Shutdown()
 		delete(p.listeners, key)
+		p.statsdCounters.listenerDec("listeners.count", []string{fmt.Sprintf("upstream:%s", key)})
 	}
 	p.listenerLock.Unlock()
 }
