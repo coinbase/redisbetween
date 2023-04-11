@@ -4,7 +4,7 @@ go 1.13
 
 require (
 	github.com/DataDog/datadog-go v4.2.0+incompatible
-	github.com/coinbase/memcachedbetween v0.0.2
+	github.com/coinbase/memcachedbetween v0.0.3
 	github.com/coinbase/mongobetween v0.0.9
 	github.com/go-redis/redis/v8 v8.4.2
 	github.com/golang/protobuf v1.5.2 // indirect

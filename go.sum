@@ -5,8 +5,8 @@ github.com/DataDog/datadog-go v4.2.0+incompatible h1:Q73jzyKHwyA04Gf4SSukRF+KR4w
 github.com/DataDog/datadog-go v4.2.0+incompatible/go.mod h1:LButxg5PwREeZtORoXG3tL4fMGNddJ+vMq1mwgfaqoQ=
 github.com/cespare/xxhash/v2 v2.1.1 h1:6MnRN8NT7+YBpUIWxHtefFZOKTAPgGjpQSxqLNn0+qY=
 github.com/cespare/xxhash/v2 v2.1.1/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/coinbase/memcachedbetween v0.0.2 h1:xQbi7OV2i58z4yk3NGVulklv67T6cEZXNJatSDWsyJs=
-github.com/coinbase/memcachedbetween v0.0.2/go.mod h1:DlJlmzJM4WlU2toj/IlqCxsLS1ndm3Zfn/w8jSWgH28=
+github.com/coinbase/memcachedbetween v0.0.3 h1:zE0Yb9AlgHpODXxglrGBiMmKu8W0aAfWJz25ydkwBn8=
+github.com/coinbase/memcachedbetween v0.0.3/go.mod h1:DlJlmzJM4WlU2toj/IlqCxsLS1ndm3Zfn/w8jSWgH28=
 github.com/coinbase/mongobetween v0.0.9 h1:d2UxDdARV3r+toJY9mEOvczdDyoKunTzUHskcfqlMdU=
 github.com/coinbase/mongobetween v0.0.9/go.mod h1:xEP6GmqKJqJyPQFgmK+KGejJbMCo1E9kakXrRkTza30=
 github.com/creack/pty v1.1.9/go.mod h1:oKZEueFk5CKHvIhNR5MUki03XCEU+Q6VDXinZuGJ33E=
