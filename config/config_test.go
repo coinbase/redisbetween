@@ -123,3 +123,101 @@ func TestMissingAddresses(t *testing.T) {
 	_, err := parseFlags()
 	assert.EqualError(t, err, "missing list of upstream hosts")
 }
+
+func TestIdleTimeout(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{}
+	os.Args = []string{
+		"redisbetween",
+		"-statsd", "statsd:1234",
+		"-unlink",
+		"-idletimeout", "10s",
+		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
+	}
+
+	resetFlags()
+	c, err := parseFlags()
+	assert.NoError(t, err)
+	assert.Equal(t, 10*time.Second, c.IdleTimeout)
+}
+
+func TestIdleTimeoutDefault(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{}
+	os.Args = []string{
+		"redisbetween",
+		"-statsd", "statsd:1234",
+		"-unlink",
+		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
+	}
+
+	resetFlags()
+	c, err := parseFlags()
+	assert.NoError(t, err)
+	assert.Equal(t, time.Duration(0), c.IdleTimeout)
+}
+
+func TestIdleTimeoutPerUrl(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{}
+	os.Args = []string{
+		"redisbetween",
+		"-statsd", "statsd:1234",
+		"-unlink",
+		"-idletimeout", "10s",
+		"redis://localhost:7001/0",
+		"redis://localhost:7002/0?idletimeout=0s",
+		"redis://localhost:7003/0?idletimeout=30s",
+	}
+
+	resetFlags()
+	c, err := parseFlags()
+	assert.NoError(t, err)
+	assert.Equal(t, 10*time.Second, c.Upstreams[0].IdleTimeout)
+	assert.Equal(t, time.Duration(0), c.Upstreams[1].IdleTimeout)
+	assert.Equal(t, 30*time.Second, c.Upstreams[2].IdleTimeout)
+}
+
+func TestHealthcheckArgs(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{}
+	os.Args = []string{
+		"redisbetween",
+		"-statsd", "statsd:1234",
+		"-unlink",
+		"-healthcheck",
+		"-healthcheckcycle", "10s",
+		"-healthcheckthreshold", "5",
+		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
+	}
+
+	resetFlags()
+	c, err := parseFlags()
+	assert.NoError(t, err)
+	assert.True(t, c.HealthCheck)
+	assert.Equal(t, 10*time.Second, c.HealthCheckCycle)
+	assert.Equal(t, 5, c.HealthCheckThreshold)
+}
+
+func TestHealthcheckDefault(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{}
+	os.Args = []string{
+		"redisbetween",
+		"-statsd", "statsd:1234",
+		"-unlink",
+		"redis://localhost:7000/0?minpoolsize=5&maxpoolsize=33&label=cluster1",
+	}
+
+	resetFlags()
+	c, err := parseFlags()
+	assert.NoError(t, err)
+	assert.False(t, c.HealthCheck)
+	assert.Equal(t, 1*time.Minute, c.HealthCheckCycle)
+	assert.Equal(t, 3, c.HealthCheckThreshold)
+}

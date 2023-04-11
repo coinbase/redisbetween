@@ -6,13 +6,13 @@ var UnsupportedCommands = map[string]bool{
 	// allow for a connection pooling proxy. if these are required in the future, we
 	// could allow ad-hoc connections to be allocated in addition to the pool to
 	// support these?
-	"BLPOP":        true,
-	"BRPOP":        true,
-	"BZPOPMAX":     true,
-	"BZPOPMIN":     true,
-	"XREAD":        true, // streams
-	"XREADGROUP":   true, // streams
-	"WAIT":         true,
+	"BLPOP":      true,
+	"BRPOP":      true,
+	"BZPOPMAX":   true,
+	"BZPOPMIN":   true,
+	"XREAD":      true, // streams
+	"XREADGROUP": true, // streams
+	"WAIT":       true,
 
 	// these commands also store connection state on the server, and so won't work
 	// with redisbetween without some special work to support them
