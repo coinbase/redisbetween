@@ -415,7 +415,7 @@ func (p *Proxy) removeListener(key string) {
 	if ok {
 		ls.Shutdown()
 		delete(p.listeners, key)
-		p.statsdCounters.listenerDec("listeners.count", []string{fmt.Sprintf("upstream:%s", key)})
+		p.statsdCounters.listenerDec("", []string{fmt.Sprintf("upstream:%s", key)})
 	}
 	p.listenerLock.Unlock()
 }
