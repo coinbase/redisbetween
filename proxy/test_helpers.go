@@ -42,8 +42,21 @@ func SetupProxyAdvancedConfig(t *testing.T, upstreamPort string, db int, maxPool
 		LocalSocketSuffix: ".sock",
 		Unlink:            true,
 	}
+	up := config.Upstream{
+		UpstreamConfigHost: uri,
+		Label:              "test",
+		Database:           db,
+		MinPoolSize:        1,
+		MaxPoolSize:        maxPoolSize,
+		Readonly:           readonly,
+		ReadTimeout:        1 * time.Second,
+		WriteTimeout:       1 * time.Second,
+		MaxSubscriptions:   1,
+		MaxBlockers:        1,
+	}
+	cfg.Upstreams = []config.Upstream{up}
 
-	proxy, err := NewProxy(zap.L(), sd, cfg, "test", uri, db, 1, maxPoolSize, 1*time.Second, 1*time.Second, readonly, 1, 1, 0*time.Second)
+	proxy, err := NewProxy(zap.L(), sd, cfg, 0)
 	assert.NoError(t, err)
 	go func() {
 		err := proxy.Run()
