@@ -65,37 +65,42 @@ type Proxy struct {
 	statsdCounters
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, label, upstreamHost string, database int, minPoolSize, maxPoolSize int, readTimeout, writeTimeout time.Duration, readonly bool, maxSub, maxBlk int, idleTimeout time.Duration) (*Proxy, error) {
-	if label != "" {
-		log = log.With(zap.String("cluster", label))
+func NewProxy(log *zap.Logger, sd *statsd.Client, config *config.Config, upstreamIndex int) (*Proxy, error) {
+	up := config.Upstreams[upstreamIndex]
+	if up.Label != "" {
+		log = log.With(zap.String("cluster", up.Label))
 
 		var err error
-		sd, err = util.StatsdWithTags(sd, []string{fmt.Sprintf("cluster:%s", label)})
+		sd, err = util.StatsdWithTags(sd, []string{fmt.Sprintf("cluster:%s", up.Label)})
 		if err != nil {
 			return nil, err
 		}
 	}
-	return &Proxy{
+	p := Proxy{
 		log:    log,
 		statsd: sd,
 		config: config,
 
-		upstreamConfigHost: upstreamHost,
-		localConfigHost:    localSocketPathFromUpstream(upstreamHost, database, readonly, config.LocalSocketPrefix, config.LocalSocketSuffix),
-		minPoolSize:        minPoolSize,
-		maxPoolSize:        maxPoolSize,
-		readTimeout:        readTimeout,
-		writeTimeout:       writeTimeout,
-		database:           database,
-		readonly:           readonly,
-		idleTimeout:        idleTimeout,
+		upstreamConfigHost: up.UpstreamConfigHost,
+		localConfigHost:    localSocketPathFromUpstream(up.UpstreamConfigHost, up.Database, up.Readonly, config.LocalSocketPrefix, config.LocalSocketSuffix),
+		minPoolSize:        up.MinPoolSize,
+		maxPoolSize:        up.MaxPoolSize,
+		readTimeout:        up.ReadTimeout,
+		writeTimeout:       up.WriteTimeout,
+		database:           up.Database,
+		readonly:           up.Readonly,
+		idleTimeout:        up.IdleTimeout,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
 
 		listeners:    make(map[string]*listener.Listener),
-		reservations: handlers.NewReservations(maxSub, maxBlk, sd),
-	}, nil
+		reservations: handlers.NewReservations(up.MaxSubscriptions, up.MaxBlockers, sd),
+	}
+	i, d := util.StatsdBackgroundGauge(sd, "proxy.listeners", []string{})
+	p.statsdCounters.listenerInc = StatsdBackgroundGaugeCallback(i)
+	p.statsdCounters.listenerDec = StatsdBackgroundGaugeCallback(d)
+	return &p, nil
 }
 
 func (p *Proxy) Run() error {
@@ -330,7 +335,7 @@ func (p *Proxy) createListener(local, upstream string) (*listener.Listener, erro
 	if err != nil {
 		return nil, err
 	}
-	p.statsdCounters.listenerInc("listeners.count", []string{fmt.Sprintf("upstream:%s", upstream)})
+	p.statsdCounters.listenerInc("", []string{fmt.Sprintf("upstream:%s", upstream)})
 	return listener, nil
 }
 

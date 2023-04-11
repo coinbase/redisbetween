@@ -90,12 +90,8 @@ func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err err
 	if err != nil {
 		return nil, err
 	}
-	for _, u := range c.Upstreams {
-		p, err := proxy.NewProxy(
-			log, s, c, u.Label, u.UpstreamConfigHost, u.Database,
-			u.MinPoolSize, u.MaxPoolSize, u.ReadTimeout, u.WriteTimeout,
-			u.Readonly, u.MaxSubscriptions, u.MaxBlockers, u.IdleTimeout,
-		)
+	for index, _ := range c.Upstreams {
+		p, err := proxy.NewProxy(log, s, c, index)
 
 		if err != nil {
 			return nil, err
