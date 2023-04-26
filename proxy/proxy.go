@@ -17,10 +17,11 @@ import (
 	"github.com/coinbase/memcachedbetween/listener"
 	"github.com/coinbase/memcachedbetween/pool"
 	"github.com/coinbase/mongobetween/util"
+	"github.com/mediocregopher/radix/v3"
+
 	"github.com/coinbase/redisbetween/config"
 	"github.com/coinbase/redisbetween/handlers"
 	"github.com/coinbase/redisbetween/redis"
-	"github.com/mediocregopher/radix/v3"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap"
@@ -154,9 +155,8 @@ func (p *Proxy) run() error {
 	ls, err := p.createListener(p.localConfigHost, p.upstreamConfigHost)
 	if err != nil {
 		return err
-	} else {
-		p.log.Info("Created Listener", zap.String("localHost", p.localConfigHost), zap.String("upstreamHost", p.upstreamConfigHost))
 	}
+	p.log.Info("Created Listener", zap.String("localHost", p.localConfigHost), zap.String("upstreamHost", p.upstreamConfigHost))
 	defer func() {
 		p.listenerWg.Wait()
 	}()
@@ -397,17 +397,6 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	}
 }
 
-// Safely grab an entry for a given key from the listeners map
-func (p *Proxy) getListener(key string) *listener.Listener {
-	p.listenerLock.Lock()
-	defer p.listenerLock.Unlock()
-	ls, ok := p.listeners[key]
-	if ok {
-		return ls
-	}
-	return nil
-}
-
 // Safely delete a listener from the map
 func (p *Proxy) removeListener(key string) {
 	p.listenerLock.Lock()
@@ -425,7 +414,7 @@ func (p *Proxy) getListenerKeys() []string {
 	p.listenerLock.Lock()
 	defer p.listenerLock.Unlock()
 	var keys []string
-	for key, _ := range p.listeners {
+	for key := range p.listeners {
 		keys = append(keys, key)
 	}
 	return keys
@@ -500,7 +489,7 @@ func compareNewNodesWithExisting(newNodes []string, existingNodes []string) (nod
 		}
 		nodesToRemove = append(nodesToRemove, node)
 	}
-	for node, _ := range newNodesMap {
+	for node := range newNodesMap {
 		nodesToAdd = append(nodesToAdd, node)
 	}
 	return
@@ -516,8 +505,16 @@ func pingServer(network, address string, readTimeout, writeTimeout time.Duration
 		}
 		return false
 	}
-	defer conn.Close()
-	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	defer func() {
+		_ = conn.Close()
+	}()
+	err = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	if err != nil {
+		if logger != nil {
+			logger.Error("failed to set write deadline", zap.Error(err))
+		}
+		return false
+	}
 	_, err = conn.Write([]byte(ping))
 	if err != nil {
 		if logger != nil {
@@ -525,7 +522,13 @@ func pingServer(network, address string, readTimeout, writeTimeout time.Duration
 		}
 		return false
 	}
-	conn.SetReadDeadline(time.Now().Add(readTimeout))
+	err = conn.SetReadDeadline(time.Now().Add(readTimeout))
+	if err != nil {
+		if logger != nil {
+			logger.Error("failed to set read deadline", zap.Error(err))
+		}
+		return false
+	}
 	resp := make([]byte, 7)
 	_, err = io.ReadFull(conn, resp)
 	if err != nil || !strings.Contains(string(resp), pong) {

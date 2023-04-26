@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"github.com/coinbase/redisbetween/config"
-	"github.com/coinbase/redisbetween/proxy"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/coinbase/redisbetween/config"
+	"github.com/coinbase/redisbetween/proxy"
 )
 
 func main() {
@@ -90,7 +91,7 @@ func proxies(c *config.Config, log *zap.Logger) (proxies []*proxy.Proxy, err err
 	if err != nil {
 		return nil, err
 	}
-	for index, _ := range c.Upstreams {
+	for index := range c.Upstreams {
 		p, err := proxy.NewProxy(log, s, c, index)
 
 		if err != nil {
