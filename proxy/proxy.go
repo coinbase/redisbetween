@@ -389,7 +389,7 @@ func (p *Proxy) healthCheckSingleConnection(key string, wg *sync.WaitGroup) {
 	if !healthy {
 		p.log.Warn("Server failed to respond; Deleting the listener", zap.String("server", key))
 		p.removeListener(key)
-		if key == p.localConfigHost {
+		if key == p.upstreamConfigHost {
 			// add the upstream config host back; we always need to have that minimally
 			// but hopefully this time, the connection is re-established to the right IP
 			p.ensureListenerForUpstream(key, "")
