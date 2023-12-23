@@ -12,8 +12,8 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/coinbase/redisbetween/config"
-	"github.com/coinbase/redisbetween/proxy"
+	"github.com/d2army/redisbetween/config"
+	"github.com/d2army/redisbetween/proxy"
 )
 
 func main() {

@@ -83,7 +83,7 @@ res := client.Do(context.Background(), "ping")
 
 ### Installation
 ```
-go install github.com/coinbase/redisbetween
+go install github.com/d2army/redisbetween
 ```
 
 ### Usage

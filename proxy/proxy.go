@@ -19,9 +19,9 @@ import (
 	"github.com/coinbase/mongobetween/util"
 	"github.com/mediocregopher/radix/v3"
 
-	"github.com/coinbase/redisbetween/config"
-	"github.com/coinbase/redisbetween/handlers"
-	"github.com/coinbase/redisbetween/redis"
+	"github.com/d2army/redisbetween/config"
+	"github.com/d2army/redisbetween/handlers"
+	"github.com/d2army/redisbetween/redis"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap"
