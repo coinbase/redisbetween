@@ -244,6 +244,7 @@ func (p *Proxy) ensureNewListenersRemoveOld(newNodes []string) {
 		if node == p.upstreamConfigHost {
 			continue
 		}
+		p.log.Warn("ensureNewListenersRemoveOld: Removing listener for", zap.String("node", node))
 		p.removeListener(node)
 	}
 
