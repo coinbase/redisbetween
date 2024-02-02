@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coinbase/redisbetween/proxy"
+	"github.com/d2army/redisbetween/proxy"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 )

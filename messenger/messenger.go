@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/redis"
+	"github.com/d2army/redisbetween/redis"
 	"go.uber.org/zap"
 )
 

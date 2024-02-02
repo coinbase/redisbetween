@@ -19,9 +19,9 @@ import (
 	"github.com/coinbase/mongobetween/util"
 	"github.com/mediocregopher/radix/v3"
 
-	"github.com/coinbase/redisbetween/config"
-	"github.com/coinbase/redisbetween/handlers"
-	"github.com/coinbase/redisbetween/redis"
+	"github.com/d2army/redisbetween/config"
+	"github.com/d2army/redisbetween/handlers"
+	"github.com/d2army/redisbetween/redis"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap"
@@ -244,6 +244,7 @@ func (p *Proxy) ensureNewListenersRemoveOld(newNodes []string) {
 		if node == p.upstreamConfigHost {
 			continue
 		}
+		p.log.Warn("ensureNewListenersRemoveOld: Removing listener for", zap.String("node", node))
 		p.removeListener(node)
 	}
 

@@ -10,7 +10,7 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/redis"
+	"github.com/d2army/redisbetween/redis"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"

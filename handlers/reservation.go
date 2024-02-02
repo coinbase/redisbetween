@@ -8,7 +8,7 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/coinbase/mongobetween/util"
-	"github.com/coinbase/redisbetween/redis"
+	"github.com/d2army/redisbetween/redis"
 )
 
 type reservation interface {

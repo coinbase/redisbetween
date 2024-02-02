@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
-	"github.com/coinbase/redisbetween/config"
+	"github.com/d2army/redisbetween/config"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"

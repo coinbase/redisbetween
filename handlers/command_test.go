@@ -3,7 +3,7 @@ package handlers
 import (
 	"testing"
 
-	"github.com/coinbase/redisbetween/redis"
+	"github.com/d2army/redisbetween/redis"
 	"github.com/stretchr/testify/assert"
 )
 

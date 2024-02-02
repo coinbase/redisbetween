@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/coinbase/memcachedbetween/pool"
-	"github.com/coinbase/redisbetween/messenger"
-	"github.com/coinbase/redisbetween/redis"
+	"github.com/d2army/redisbetween/messenger"
+	"github.com/d2army/redisbetween/redis"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.uber.org/zap"

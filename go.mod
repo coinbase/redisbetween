@@ -1,4 +1,4 @@
-module github.com/coinbase/redisbetween
+module github.com/d2army/redisbetween
 
 go 1.13
 
